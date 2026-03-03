@@ -14,7 +14,7 @@ import speedtest
 from flask import Flask, jsonify, render_template, request, session
 
 app = Flask(__name__)
-app.secret_key = secrets.token_hex(32)
+app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
