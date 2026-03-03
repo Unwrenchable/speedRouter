@@ -1,0 +1,20 @@
+[project]
+name = "speedrouter-agent-tools"
+version = "0.1.0"
+description = "Agent registry, capability checks, and access profiles for speedRouter"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+agentx = "agent_tools.cli:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["agent_tools", "agent_tools.data"]
+
+[tool.setuptools.package-data]
+agent_tools = ["data/*.json"]

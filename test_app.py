@@ -4,6 +4,7 @@ import json
 import pytest
 
 from app import app as flask_app
+from agent_tools.registry import load_agents, load_profiles, find_agents, assess_agent_access, recommend_profile
 
 
 @pytest.fixture
@@ -136,3 +137,57 @@ def test_disconnect(client):
     # Session should be cleared
     with client.session_transaction() as sess:
         assert "gateway" not in sess
+
+
+# ── Agent toolkit ─────────────────────────────────────────────────────────────
+
+def test_agent_registry_loads():
+    agents = load_agents()
+    assert len(agents) > 0
+    assert "speedrouter-implementation-pilot" in agents
+    assert "speedrouter-security-auditor" in agents
+
+
+def test_profiles_load():
+    profiles = load_profiles()
+    assert "safe" in profiles
+    assert "balanced" in profiles
+    assert "power" in profiles
+
+
+def test_find_agents_speedrouter():
+    agents = load_agents()
+    matches = list(find_agents(agents, "speedrouter"))
+    ids = [a.id for a in matches]
+    assert "speedrouter-orchestrator" in ids
+    assert "speedrouter-vpn-specialist" in ids
+
+
+def test_find_agents_no_match():
+    agents = load_agents()
+    matches = list(find_agents(agents, "zzz-no-match-zzz"))
+    assert matches == []
+
+
+def test_assess_agent_access_pass():
+    agents = load_agents()
+    profiles = load_profiles()
+    report = assess_agent_access(agents["speedrouter-security-auditor"], profiles["safe"])
+    assert report["pass"] is True
+    assert report["missing_tools"] == []
+
+
+def test_assess_agent_access_fail():
+    agents = load_agents()
+    profiles = load_profiles()
+    # implementation pilot needs apply_patch/create_file which safe profile lacks
+    report = assess_agent_access(agents["speedrouter-implementation-pilot"], profiles["safe"])
+    assert report["pass"] is False
+    assert "apply_patch" in report["missing_tools"]
+
+
+def test_recommend_profile():
+    agents = load_agents()
+    profiles = load_profiles()
+    profile = recommend_profile(agents["speedrouter-orchestrator"], profiles)
+    assert profile.name == "power"
