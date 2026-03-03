@@ -118,6 +118,19 @@ ROUTER_PRESETS = {
 }
 
 
+def _gateway_base_url(scheme: str, gateway: str, port: int) -> str:
+    """Return the base URL for the gateway, omitting the port when it is the scheme default."""
+    standard = {"http": 80, "https": 443}
+    if port == standard.get(scheme):
+        return f"{scheme}://{gateway}"
+    return f"{scheme}://{gateway}:{port}"
+
+
+# Ordered list of (scheme, port) combinations to probe when connecting.
+# Many consumer routers serve their admin panel on 8080 or 8443.
+_PROBE_SEQUENCE = [("http", 80), ("http", 8080), ("https", 443), ("https", 8443)]
+
+
 def _modem_session(
     gateway: str,
     username: str,
@@ -126,6 +139,7 @@ def _modem_session(
     user_field: str = "username",
     pass_field: str = "password",
     scheme: str = "http",
+    port: int | None = None,
 ) -> requests.Session:
     """Return an authenticated requests.Session for the modem admin panel.
 
@@ -134,13 +148,16 @@ def _modem_session(
     serve their admin panel over HTTPS with a self-signed certificate;
     certificate verification is intentionally disabled for LAN-only devices.
     """
+    if port is None:
+        port = 443 if scheme == "https" else 80
+
     s = requests.Session()
     if scheme == "https":
         s.verify = False  # router self-signed certs are expected on the LAN
 
     # Allow per-request or env-var override of login URL
     path = login_path or _C4000BZ_LOGIN_URL or "/login.cgi"
-    login_url = f"{scheme}://{gateway}{path}"
+    login_url = _gateway_base_url(scheme, gateway, port) + path
 
     try:
         resp = s.post(
@@ -227,30 +244,34 @@ def api_connect():
         if preset_cfg is not None:
             login_path, user_field, pass_field = preset_cfg
 
-    # Probe the modem: try HTTP first, then HTTPS.  Many modern routers serve
-    # their admin panel exclusively over HTTPS with a self-signed certificate;
-    # any HTTP response (including 401/403) confirms the modem is reachable.
+    # Probe the modem across common (scheme, port) combinations used by consumer
+    # routers.  Any HTTP response (including 401/403) confirms reachability.
     scheme = "http"
-    for try_scheme in ("http", "https"):
+    port = 80
+    last_exc: requests.RequestException | None = None
+    for try_scheme, try_port in _PROBE_SEQUENCE:
         try:
             s = _modem_session(gateway, username, password, login_path=login_path,
                                user_field=user_field, pass_field=pass_field,
-                               scheme=try_scheme)
-            _ = s.get(f"{try_scheme}://{gateway}/", timeout=5)
+                               scheme=try_scheme, port=try_port)
+            probe_url = _gateway_base_url(try_scheme, gateway, try_port) + "/"
+            _ = s.get(probe_url, timeout=5)
             scheme = try_scheme
-            break  # modem reachable on this scheme
+            port = try_port
+            break  # modem reachable on this scheme/port
         except requests.RequestException as exc:
-            if try_scheme == "https":
-                # Both HTTP and HTTPS failed
-                if isinstance(exc, requests.Timeout):
-                    return jsonify({"ok": False, "error": "Modem timed out."}), 504
-                return jsonify({"ok": False, "error": "Cannot reach modem. Check the IP address."}), 502
-            # HTTP failed (any reason) — try HTTPS next
+            last_exc = exc
+    else:
+        # All probes failed
+        if isinstance(last_exc, requests.Timeout):
+            return jsonify({"ok": False, "error": "Modem timed out."}), 504
+        return jsonify({"ok": False, "error": "Cannot reach modem. Check the IP address."}), 502
 
     session["gateway"] = gateway
     session["username"] = username
     session["password"] = password
     session["scheme"] = scheme
+    session["port"] = port
     return jsonify({"ok": True, "gateway": gateway})
 
 
@@ -274,42 +295,44 @@ def api_optimize():
     username = session["username"]
     password = session["password"]
     scheme = session.get("scheme", "http")
+    port = session.get("port", 443 if scheme == "https" else 80)
 
     results = []
 
     try:
-        s = _modem_session(gateway, username, password, scheme=scheme)
+        s = _modem_session(gateway, username, password, scheme=scheme, port=port)
+        base = _gateway_base_url(scheme, gateway, port)
 
         settings = [
             # (description, endpoint, payload)
             (
                 "DNS set to 1.1.1.1 / 8.8.8.8",
-                f"{scheme}://{gateway}/wan_dns.cgi",
+                f"{base}/wan_dns.cgi",
                 {"dns1": "1.1.1.1", "dns2": "8.8.8.8"},
             ),
             (
                 "TR-069 / CWMP (ISP remote management) disabled",
-                f"{scheme}://{gateway}/cwmp.cgi",
+                f"{base}/cwmp.cgi",
                 {"cwmp_enable": "0"},
             ),
             (
                 "Firewall / SPI enabled",
-                f"{scheme}://{gateway}/firewall.cgi",
+                f"{base}/firewall.cgi",
                 {"firewall_enable": "1", "spi_enable": "1"},
             ),
             (
                 "UPnP disabled",
-                f"{scheme}://{gateway}/upnp.cgi",
+                f"{base}/upnp.cgi",
                 {"upnp_enable": "0"},
             ),
             (
                 "MTU set to 1500",
-                f"{scheme}://{gateway}/wan_mtu.cgi",
+                f"{base}/wan_mtu.cgi",
                 {"mtu": "1500"},
             ),
             (
                 "WPS disabled",
-                f"{scheme}://{gateway}/wps.cgi",
+                f"{base}/wps.cgi",
                 {"wps_enable": "0"},
             ),
         ]
@@ -370,6 +393,7 @@ def api_vpn_config():
     username = session["username"]
     password = session["password"]
     scheme = session.get("scheme", "http")
+    port = session.get("port", 443 if scheme == "https" else 80)
 
     data = request.get_json(silent=True) or {}
     endpoint = data.get("endpoint", "").strip()
@@ -382,9 +406,10 @@ def api_vpn_config():
         return jsonify({"ok": False, "error": "endpoint, public_key and private_key are required."}), 400
 
     try:
-        s = _modem_session(gateway, username, password, scheme=scheme)
+        s = _modem_session(gateway, username, password, scheme=scheme, port=port)
+        base = _gateway_base_url(scheme, gateway, port)
         resp = s.post(
-            f"{scheme}://{gateway}/vpn_wireguard.cgi",
+            f"{base}/vpn_wireguard.cgi",
             data={
                 "wg_enable": "1",
                 "wg_endpoint": endpoint,
@@ -472,6 +497,7 @@ def api_robocall_push():
     username = session["username"]
     password = session["password"]
     scheme = session.get("scheme", "http")
+    port = session.get("port", 443 if scheme == "https" else 80)
 
     entries = _load_blocklist()
     if not entries:
@@ -479,12 +505,13 @@ def api_robocall_push():
 
     results = []
     try:
-        s = _modem_session(gateway, username, password, scheme=scheme)
+        s = _modem_session(gateway, username, password, scheme=scheme, port=port)
+        base = _gateway_base_url(scheme, gateway, port)
         for entry in entries:
             network = ipaddress.ip_network(entry["cidr"])
             try:
                 resp = s.post(
-                    f"{scheme}://{gateway}/firewall_block.cgi",
+                    f"{base}/firewall_block.cgi",
                     data={
                         "ip_block": str(network.network_address),
                         "ip_mask": str(network.netmask),
