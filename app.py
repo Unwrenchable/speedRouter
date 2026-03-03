@@ -4,11 +4,8 @@ Provides: modem login, security/performance optimiser, ISP-proofing,
           VPN configuration and internet speed test.
 """
 
-import html
 import ipaddress
-import json
 import secrets
-import threading
 
 import requests
 import speedtest
@@ -59,7 +56,7 @@ def api_connect():
     """Authenticate with the modem admin panel and persist session info."""
     data = request.get_json(silent=True) or {}
     gateway = data.get("gateway", "").strip()
-    username = html.escape(data.get("username", "").strip())
+    username = data.get("username", "").strip()
     password = data.get("password", "")
 
     if not gateway or not username or not password:
