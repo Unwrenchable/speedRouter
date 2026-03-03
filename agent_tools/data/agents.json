@@ -1,0 +1,102 @@
+[
+  {
+    "id": "orchestrator",
+    "role": "Workflow Orchestrator",
+    "description": "Coordinates multi-agent workflows and handoffs across repos",
+    "tags": ["planning", "coordination", "multi-repo"],
+    "capabilities": ["task-breakdown", "status-tracking", "dependency-ordering"],
+    "required_tools": ["read_file", "list_dir", "runSubagent"],
+    "preferred_profile": "power",
+    "risk_level": "medium"
+  },
+  {
+    "id": "repo-auditor",
+    "role": "Repository Auditor",
+    "description": "Scans repositories for patterns, quality, and migration opportunities",
+    "tags": ["analysis", "quality", "migration"],
+    "capabilities": ["code-search", "gap-analysis", "reporting"],
+    "required_tools": ["read_file", "grep_search", "semantic_search"],
+    "preferred_profile": "safe",
+    "risk_level": "low"
+  },
+  {
+    "id": "implementation-engineer",
+    "role": "Implementation Engineer",
+    "description": "Applies focused code changes with validation",
+    "tags": ["coding", "fixes", "delivery"],
+    "capabilities": ["patching", "validation", "targeted-refactors"],
+    "required_tools": ["read_file", "apply_patch", "create_file", "run_in_terminal"],
+    "preferred_profile": "balanced",
+    "risk_level": "medium"
+  },
+  {
+    "id": "capability-guardian",
+    "role": "Capability Guardian",
+    "description": "Checks whether an agent has enough and not too much access for a task",
+    "tags": ["security", "policy", "governance"],
+    "capabilities": ["least-privilege", "policy-check", "access-recommendation"],
+    "required_tools": ["read_file", "list_dir"],
+    "preferred_profile": "safe",
+    "risk_level": "low"
+  },
+  {
+    "id": "speedrouter-implementation-pilot",
+    "role": "speedRouter Implementation Pilot",
+    "description": "Executes scoped code changes to the speedRouter Flask app with validation and release hygiene.",
+    "tags": ["speedrouter", "general", "implementation", "quality"],
+    "capabilities": ["code-changes", "refactoring", "test-validation"],
+    "required_tools": ["read_file", "apply_patch", "create_file", "run_in_terminal"],
+    "preferred_profile": "balanced",
+    "risk_level": "medium"
+  },
+  {
+    "id": "speedrouter-orchestrator",
+    "role": "speedRouter Multi-Agent Orchestrator",
+    "description": "Coordinates planning, implementation, and verification agents for the speedRouter repository.",
+    "tags": ["speedrouter", "general", "orchestration", "multi-agent"],
+    "capabilities": ["task-routing", "handoffs", "delivery-status"],
+    "required_tools": ["read_file", "list_dir", "runSubagent"],
+    "preferred_profile": "power",
+    "risk_level": "medium"
+  },
+  {
+    "id": "speedrouter-network-engineer",
+    "role": "speedRouter Network Engineer",
+    "description": "Manages modem connectivity features: gateway authentication, DNS optimization, MTU, firewall, UPnP, WPS, and TR-069 settings.",
+    "tags": ["speedrouter", "networking", "modem", "security"],
+    "capabilities": ["modem-login", "dns-config", "firewall-config", "isp-proofing"],
+    "required_tools": ["read_file", "apply_patch", "create_file", "run_in_terminal"],
+    "preferred_profile": "balanced",
+    "risk_level": "medium"
+  },
+  {
+    "id": "speedrouter-vpn-specialist",
+    "role": "speedRouter VPN Specialist",
+    "description": "Handles WireGuard VPN configuration push to modem and validates endpoint, key, and CIDR parameters.",
+    "tags": ["speedrouter", "vpn", "wireguard", "security"],
+    "capabilities": ["vpn-config", "key-validation", "endpoint-management"],
+    "required_tools": ["read_file", "apply_patch", "create_file", "run_in_terminal"],
+    "preferred_profile": "balanced",
+    "risk_level": "medium"
+  },
+  {
+    "id": "speedrouter-speed-analyst",
+    "role": "speedRouter Speed Analyst",
+    "description": "Runs and interprets internet speed tests, benchmarks download/upload/ping, and surfaces performance recommendations.",
+    "tags": ["speedrouter", "performance", "speedtest", "analytics"],
+    "capabilities": ["speed-test", "benchmark-reporting", "server-selection"],
+    "required_tools": ["read_file", "apply_patch", "run_in_terminal"],
+    "preferred_profile": "balanced",
+    "risk_level": "low"
+  },
+  {
+    "id": "speedrouter-security-auditor",
+    "role": "speedRouter Security Auditor",
+    "description": "Audits the speedRouter codebase for vulnerabilities: input validation, session handling, IP sanitization, and dependency hygiene.",
+    "tags": ["speedrouter", "security", "audit", "policy"],
+    "capabilities": ["input-validation", "session-review", "dependency-scan"],
+    "required_tools": ["read_file", "list_dir", "grep_search", "semantic_search"],
+    "preferred_profile": "safe",
+    "risk_level": "low"
+  }
+]

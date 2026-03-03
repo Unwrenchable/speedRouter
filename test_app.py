@@ -4,6 +4,7 @@ import json
 import pytest
 
 from app import app as flask_app
+from agent_tools.registry import load_agents, load_profiles, find_agents, assess_agent_access, recommend_profile
 
 
 @pytest.fixture
@@ -136,3 +137,128 @@ def test_disconnect(client):
     # Session should be cleared
     with client.session_transaction() as sess:
         assert "gateway" not in sess
+
+
+# ── Agent toolkit ─────────────────────────────────────────────────────────────
+
+def test_agent_registry_loads():
+    agents = load_agents()
+    assert len(agents) > 0
+    assert "speedrouter-implementation-pilot" in agents
+    assert "speedrouter-security-auditor" in agents
+
+
+def test_profiles_load():
+    profiles = load_profiles()
+    assert "safe" in profiles
+    assert "balanced" in profiles
+    assert "power" in profiles
+
+
+def test_find_agents_speedrouter():
+    agents = load_agents()
+    matches = list(find_agents(agents, "speedrouter"))
+    ids = [a.id for a in matches]
+    assert "speedrouter-orchestrator" in ids
+    assert "speedrouter-vpn-specialist" in ids
+
+
+def test_find_agents_no_match():
+    agents = load_agents()
+    matches = list(find_agents(agents, "zzz-no-match-zzz"))
+    assert matches == []
+
+
+def test_assess_agent_access_pass():
+    agents = load_agents()
+    profiles = load_profiles()
+    report = assess_agent_access(agents["speedrouter-security-auditor"], profiles["safe"])
+    assert report["pass"] is True
+    assert report["missing_tools"] == []
+
+
+def test_assess_agent_access_fail():
+    agents = load_agents()
+    profiles = load_profiles()
+    # implementation pilot needs apply_patch/create_file which safe profile lacks
+    report = assess_agent_access(agents["speedrouter-implementation-pilot"], profiles["safe"])
+    assert report["pass"] is False
+    assert "apply_patch" in report["missing_tools"]
+
+
+def test_recommend_profile():
+    agents = load_agents()
+    profiles = load_profiles()
+    profile = recommend_profile(agents["speedrouter-orchestrator"], profiles)
+    assert profile.name == "power"
+
+
+# ── CLI entry point ───────────────────────────────────────────────────────────
+
+def test_main_exists():
+    """main() must be importable and callable without errors (no-start test)."""
+    from app import main
+    assert callable(main)
+
+
+def test_main_default_host_is_localhost(monkeypatch):
+    """main() passes host=127.0.0.1 to app.run() when no env var is set."""
+    import app as app_module
+
+    monkeypatch.delenv("SPEEDROUTER_HOST", raising=False)
+    monkeypatch.delenv("SPEEDROUTER_PORT", raising=False)
+
+    captured = {}
+
+    def fake_run(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(app_module.app, "run", fake_run)
+    monkeypatch.setattr("sys.argv", ["speedrouter"])
+
+    app_module.main()
+
+    assert captured["host"] == "127.0.0.1"
+    assert captured["port"] == 5000
+
+
+def test_main_env_override(monkeypatch):
+    """SPEEDROUTER_HOST and SPEEDROUTER_PORT env vars are passed to app.run()."""
+    import app as app_module
+
+    monkeypatch.setenv("SPEEDROUTER_HOST", "0.0.0.0")
+    monkeypatch.setenv("SPEEDROUTER_PORT", "8080")
+
+    captured = {}
+
+    def fake_run(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(app_module.app, "run", fake_run)
+    monkeypatch.setattr("sys.argv", ["speedrouter"])
+
+    app_module.main()
+
+    assert captured["host"] == "0.0.0.0"
+    assert captured["port"] == 8080
+
+
+def test_main_cli_args_override(monkeypatch):
+    """--host and --port CLI flags are passed to app.run()."""
+    import app as app_module
+
+    monkeypatch.delenv("SPEEDROUTER_HOST", raising=False)
+    monkeypatch.delenv("SPEEDROUTER_PORT", raising=False)
+
+    captured = {}
+
+    def fake_run(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(app_module.app, "run", fake_run)
+    monkeypatch.setattr("sys.argv", ["speedrouter", "--host", "0.0.0.0", "--port", "9000"])
+
+    app_module.main()
+
+    assert captured["host"] == "0.0.0.0"
+    assert captured["port"] == 9000

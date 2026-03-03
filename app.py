@@ -4,7 +4,9 @@ Provides: modem login, security/performance optimiser, ISP-proofing,
           VPN configuration and internet speed test.
 """
 
+import argparse
 import ipaddress
+import os
 import secrets
 
 import requests
@@ -243,5 +245,26 @@ def api_disconnect():
     return jsonify({"ok": True})
 
 
+def main():
+    """CLI entry point: start the speedRouter web UI."""
+    parser = argparse.ArgumentParser(
+        prog="speedrouter",
+        description="speedRouter – modem management UI (connect, optimise, VPN, speed test)",
+    )
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("SPEEDROUTER_HOST", "127.0.0.1"),
+        help="Host address to bind (default: 127.0.0.1; use 0.0.0.0 to expose on the network)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("SPEEDROUTER_PORT", "5000")),
+        help="Port to listen on (default: 5000)",
+    )
+    args = parser.parse_args()
+    app.run(debug=False, host=args.host, port=args.port)
+
+
 if __name__ == "__main__":
-    app.run(debug=False, host="127.0.0.1", port=5000)
+    main()
