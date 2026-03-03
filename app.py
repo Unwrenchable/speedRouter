@@ -274,7 +274,7 @@ def _modem_session(
         resp = s.post(
             login_url,
             data={user_field: username, pass_field: password},
-            timeout=5,
+            timeout=3,
             allow_redirects=True,
         )
         resp.raise_for_status()
@@ -366,7 +366,7 @@ def api_connect():
                                user_field=user_field, pass_field=pass_field,
                                scheme=try_scheme, port=try_port)
             probe_url = _gateway_base_url(try_scheme, gateway, try_port) + "/"
-            _ = s.get(probe_url, timeout=5)
+            _ = s.get(probe_url, timeout=3)
             scheme = try_scheme
             port = try_port
             break  # modem reachable on this scheme/port
