@@ -5,6 +5,7 @@ Provides: modem login, security/performance optimiser, ISP-proofing,
 """
 
 import argparse
+import base64
 import ipaddress
 import json
 import os
@@ -18,6 +19,13 @@ from pathlib import Path
 import requests
 import speedtest
 import urllib3
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    NoEncryption,
+    PrivateFormat,
+    PublicFormat,
+)
 from flask import Flask, jsonify, render_template, request, session
 
 # Suppress InsecureRequestWarning when connecting to routers that use self-signed
@@ -101,6 +109,109 @@ def _load_blocklist() -> list[dict]:
 def _save_blocklist(entries: list[dict]) -> None:
     """Persist the blocklist to disk."""
     _BLOCKLIST_PATH.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+
+
+# ── Built-in WireGuard VPN server ────────────────────────────────────────────
+
+_VPN_SERVER_PATH = Path(
+    os.environ.get(
+        "VPN_SERVER_PATH",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "vpn_server.json"),
+    )
+)
+
+_VPN_PEERS_PATH = Path(
+    os.environ.get(
+        "VPN_PEERS_PATH",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "vpn_peers.json"),
+    )
+)
+
+
+def _wg_generate_keypair() -> tuple[str, str]:
+    """Generate a WireGuard-compatible Curve25519 key pair.
+
+    Returns (private_key_b64, public_key_b64) as base64 strings compatible
+    with the WireGuard configuration format.
+    """
+    priv = X25519PrivateKey.generate()
+    priv_bytes = priv.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
+    pub_bytes = priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    return base64.b64encode(priv_bytes).decode(), base64.b64encode(pub_bytes).decode()
+
+
+def _load_vpn_server() -> dict:
+    """Load the VPN server configuration from disk; return {} if absent/corrupt."""
+    if _VPN_SERVER_PATH.exists():
+        try:
+            data = json.loads(_VPN_SERVER_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def _save_vpn_server(data: dict) -> None:
+    """Persist the VPN server configuration to disk."""
+    _VPN_SERVER_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _load_vpn_peers() -> list[dict]:
+    """Load the VPN peer list from disk; return [] if absent/corrupt."""
+    if _VPN_PEERS_PATH.exists():
+        try:
+            data = json.loads(_VPN_PEERS_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+    return []
+
+
+def _save_vpn_peers(peers: list[dict]) -> None:
+    """Persist the VPN peer list to disk."""
+    _VPN_PEERS_PATH.write_text(json.dumps(peers, indent=2), encoding="utf-8")
+
+
+def _build_server_wg_config(server: dict, peers: list[dict]) -> str:
+    """Return a wg0.conf-compatible string for the VPN server."""
+    subnet = ipaddress.ip_network(server["subnet"], strict=False)
+    server_addr = str(next(iter(subnet.hosts())))
+    lines = [
+        "[Interface]",
+        f"PrivateKey = {server['private_key']}",
+        f"Address = {server_addr}/{subnet.prefixlen}",
+        f"ListenPort = {server.get('port', 51820)}",
+        "",
+    ]
+    for peer in peers:
+        lines += [
+            "[Peer]",
+            f"PublicKey = {peer['public_key']}",
+            f"AllowedIPs = {peer['address']}/32",
+            "",
+        ]
+    return "\n".join(lines)
+
+
+def _build_peer_wg_config(server: dict, peer: dict) -> str:
+    """Return a wg-client.conf-compatible string for a VPN peer."""
+    endpoint = server.get("endpoint") or f"<YOUR_SERVER_IP>:{server.get('port', 51820)}"
+    lines = [
+        "[Interface]",
+        f"PrivateKey = {peer['private_key']}",
+        f"Address = {peer['address']}/32",
+        f"DNS = {server.get('dns', '1.1.1.1')}",
+        "",
+        "[Peer]",
+        f"PublicKey = {server['public_key']}",
+        f"Endpoint = {endpoint}",
+        "AllowedIPs = 0.0.0.0/0",
+        "PersistentKeepalive = 25",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 # ── Router login strategies ───────────────────────────────────────────────────
@@ -527,6 +638,194 @@ def api_robocall_push():
         return jsonify({"ok": False, "error": str(exc)}), 500
 
     return jsonify({"ok": True, "results": results})
+
+
+# ── Built-in VPN server routes ────────────────────────────────────────────────
+
+@app.route("/api/vpn/keygen")
+def api_vpn_keygen():
+    """Generate a fresh WireGuard key pair without persisting anything."""
+    private_key, public_key = _wg_generate_keypair()
+    return jsonify({"ok": True, "private_key": private_key, "public_key": public_key})
+
+
+@app.route("/api/vpn/server/status")
+def api_vpn_server_status():
+    """Return VPN server initialisation state and (where possible) running state."""
+    server = _load_vpn_server()
+    if not server:
+        return jsonify({"ok": True, "initialized": False})
+    running = False
+    try:
+        result = subprocess.run(
+            ["wg", "show", "wg0"], capture_output=True, timeout=5
+        )
+        running = result.returncode == 0
+    except (FileNotFoundError, subprocess.SubprocessError):
+        pass
+    return jsonify({
+        "ok": True,
+        "initialized": True,
+        "public_key": server["public_key"],
+        "port": server.get("port", 51820),
+        "subnet": server.get("subnet", "10.8.0.0/24"),
+        "endpoint": server.get("endpoint", ""),
+        "peer_count": len(_load_vpn_peers()),
+        "running": running,
+    })
+
+
+@app.route("/api/vpn/server/init", methods=["POST"])
+def api_vpn_server_init():
+    """Initialise (or re-key) the VPN server — generates a fresh Curve25519 key pair."""
+    data = request.get_json(silent=True) or {}
+    try:
+        port = int(data.get("port", 51820))
+        if not (1 <= port <= 65535):
+            raise ValueError
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "port must be an integer between 1 and 65535."}), 400
+    subnet_raw = data.get("subnet", "10.8.0.0/24").strip()
+    try:
+        subnet_str = str(ipaddress.ip_network(subnet_raw, strict=False))
+    except ValueError:
+        return jsonify({"ok": False, "error": "Invalid subnet CIDR."}), 400
+    endpoint = data.get("endpoint", "").strip()
+    dns_raw = data.get("dns", "1.1.1.1").strip()
+    try:
+        dns = _safe_ip(dns_raw)
+    except ValueError:
+        return jsonify({"ok": False, "error": "Invalid DNS IP address."}), 400
+    private_key, public_key = _wg_generate_keypair()
+    server = {
+        "private_key": private_key,
+        "public_key": public_key,
+        "port": port,
+        "subnet": subnet_str,
+        "endpoint": endpoint,
+        "dns": dns,
+    }
+    _save_vpn_server(server)
+    return jsonify({"ok": True, "public_key": public_key, "port": port, "subnet": subnet_str})
+
+
+@app.route("/api/vpn/server/config")
+def api_vpn_server_config():
+    """Return the WireGuard server configuration file content (wg0.conf)."""
+    server = _load_vpn_server()
+    if not server:
+        return jsonify({"ok": False, "error": "VPN server not initialised."}), 400
+    peers = _load_vpn_peers()
+    return jsonify({"ok": True, "config": _build_server_wg_config(server, peers)})
+
+
+@app.route("/api/vpn/server/apply", methods=["POST"])
+def api_vpn_server_apply():
+    """Write wg0.conf and bring up the interface (Linux with WireGuard + root required)."""
+    server = _load_vpn_server()
+    if not server:
+        return jsonify({"ok": False, "error": "VPN server not initialised."}), 400
+    peers = _load_vpn_peers()
+    config = _build_server_wg_config(server, peers)
+    wg_conf = Path("/etc/wireguard/wg0.conf")
+    try:
+        wg_conf.write_text(config, encoding="utf-8")
+        subprocess.run(["wg-quick", "up", "wg0"], check=True, timeout=30, capture_output=True)
+        return jsonify({"ok": True, "message": "WireGuard VPN server started on wg0."})
+    except PermissionError:
+        return jsonify({"ok": False, "error": "Permission denied — run speedRouter as root or with sudo."}), 403
+    except FileNotFoundError:
+        return jsonify({"ok": False, "error": "WireGuard (wg-quick) is not installed on this system."}), 501
+    except subprocess.CalledProcessError as exc:
+        return jsonify({"ok": False, "error": f"wg-quick failed: {exc.stderr.decode()[:300]}"}), 500
+
+
+@app.route("/api/vpn/peers")
+def api_vpn_peers_list():
+    """Return VPN peer list (public keys only — private keys are never exposed here)."""
+    peers = _load_vpn_peers()
+    safe = [
+        {
+            "id": p["id"],
+            "name": p["name"],
+            "public_key": p["public_key"],
+            "address": p["address"],
+            "added": p.get("added", ""),
+        }
+        for p in peers
+    ]
+    return jsonify({"ok": True, "peers": safe})
+
+
+@app.route("/api/vpn/peers/add", methods=["POST"])
+def api_vpn_peers_add():
+    """Create a new peer with auto-generated keys and the next available tunnel IP."""
+    server = _load_vpn_server()
+    if not server:
+        return jsonify({"ok": False, "error": "Initialise the VPN server first."}), 400
+    data = request.get_json(silent=True) or {}
+    name = data.get("name", "").strip()
+    if not name:
+        return jsonify({"ok": False, "error": "Peer name is required."}), 400
+    peers = _load_vpn_peers()
+    subnet = ipaddress.ip_network(server["subnet"], strict=False)
+    hosts = list(subnet.hosts())
+    server_ip = str(hosts[0])  # server always takes the first host
+    used = {server_ip} | {p["address"] for p in peers}
+    next_ip = next((str(h) for h in hosts if str(h) not in used), None)
+    if not next_ip:
+        return jsonify({"ok": False, "error": "No IP addresses available in subnet."}), 400
+    private_key, public_key = _wg_generate_keypair()
+    peer = {
+        "id": secrets.token_hex(8),
+        "name": name,
+        "private_key": private_key,
+        "public_key": public_key,
+        "address": next_ip,
+        "added": datetime.now(tz=timezone.utc).strftime("%Y-%m-%d"),
+    }
+    peers.append(peer)
+    _save_vpn_peers(peers)
+    return jsonify({
+        "ok": True,
+        "peer": {
+            "id": peer["id"],
+            "name": peer["name"],
+            "public_key": peer["public_key"],
+            "address": peer["address"],
+        },
+    })
+
+
+@app.route("/api/vpn/peers/remove", methods=["POST"])
+def api_vpn_peers_remove():
+    """Remove a peer by its ID."""
+    data = request.get_json(silent=True) or {}
+    peer_id = data.get("id", "").strip()
+    if not peer_id:
+        return jsonify({"ok": False, "error": "Peer ID is required."}), 400
+    peers = _load_vpn_peers()
+    before = len(peers)
+    peers = [p for p in peers if p["id"] != peer_id]
+    _save_vpn_peers(peers)
+    return jsonify({"ok": True, "removed": before - len(peers)})
+
+
+@app.route("/api/vpn/peers/<peer_id>/config")
+def api_vpn_peer_config(peer_id: str):
+    """Return the complete WireGuard client config for a peer (includes private key)."""
+    server = _load_vpn_server()
+    if not server:
+        return jsonify({"ok": False, "error": "VPN server not initialised."}), 400
+    peers = _load_vpn_peers()
+    peer = next((p for p in peers if p["id"] == peer_id), None)
+    if not peer:
+        return jsonify({"ok": False, "error": "Peer not found."}), 404
+    return jsonify({
+        "ok": True,
+        "config": _build_peer_wg_config(server, peer),
+        "name": peer["name"],
+    })
 
 
 @app.route("/api/disconnect", methods=["POST"])

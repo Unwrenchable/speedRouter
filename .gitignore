@@ -11,3 +11,5 @@ build/
 htmlcov/
 .coverage
 blocklist.json
+vpn_server.json
+vpn_peers.json

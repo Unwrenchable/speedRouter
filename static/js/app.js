@@ -381,3 +381,202 @@ document.getElementById("btn-robocall-push").addEventListener("click", async () 
 // Load the robocall list whenever the tab is first shown, and on initial page load
 document.getElementById("tab-robocall-btn").addEventListener("shown.bs.tab", renderRobocallList);
 renderRobocallList();
+
+// ── VPN Server ────────────────────────────────────────────────────────────────
+
+async function loadVpnServerStatus() {
+  const statusEl = document.getElementById("vpnsvr-status");
+  const configSection = document.getElementById("vpnsvr-config-section");
+  const peersSection  = document.getElementById("vpnsvr-peers-section");
+  try {
+    const data = await (await fetch("/api/vpn/server/status")).json();
+    if (!data.ok) { statusEl.innerHTML = `<div class="alert alert-danger">❌ ${escapeHtml(data.error)}</div>`; return; }
+    if (!data.initialized) {
+      statusEl.innerHTML = `<div class="alert alert-info">ℹ️ VPN server not yet initialised. Fill in the form below and click <strong>(Re-)Generate Server Keys</strong>.</div>`;
+      configSection.classList.add("d-none");
+      peersSection.classList.add("d-none");
+    } else {
+      const runBadge = data.running
+        ? `<span class="badge bg-success ms-2">▶ Running</span>`
+        : `<span class="badge bg-secondary ms-2">⏹ Stopped</span>`;
+      statusEl.innerHTML = `
+        <div class="alert alert-success py-2">
+          ✅ VPN server initialised${runBadge}<br>
+          <span class="font-monospace small">${escapeHtml(data.public_key)}</span><br>
+          <span class="text-muted small">Subnet: ${escapeHtml(data.subnet)} · Port: ${escapeHtml(String(data.port))} · Peers: ${data.peer_count}</span>
+        </div>`;
+      configSection.classList.remove("d-none");
+      peersSection.classList.remove("d-none");
+      await loadVpnServerConfig();
+      await renderVpnPeerList();
+    }
+  } catch {
+    statusEl.innerHTML = `<div class="alert alert-danger">❌ Network error.</div>`;
+  }
+}
+
+async function loadVpnServerConfig() {
+  try {
+    const data = await (await fetch("/api/vpn/server/config")).json();
+    if (data.ok) document.getElementById("vpnsvr-config-text").textContent = data.config;
+  } catch { /* ignore */ }
+}
+
+async function renderVpnPeerList() {
+  const container = document.getElementById("vpnsvr-peer-list");
+  try {
+    const data = await (await fetch("/api/vpn/peers")).json();
+    if (!data.ok || data.peers.length === 0) {
+      container.innerHTML = `<p class="text-muted small">No peers yet. Add one above.</p>`;
+      return;
+    }
+    const rows = data.peers.map((p) => `
+      <tr>
+        <td class="small">${escapeHtml(p.name)}</td>
+        <td class="small font-monospace">${escapeHtml(p.address)}</td>
+        <td class="small text-muted">${escapeHtml(p.added)}</td>
+        <td class="small"><button type="button" class="btn btn-sm btn-outline-info py-0 vp-dl"
+            data-id="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}">⬇ Config</button></td>
+        <td><button type="button" class="btn btn-sm btn-outline-danger py-0 vp-remove"
+            data-id="${escapeHtml(p.id)}">Remove</button></td>
+      </tr>`).join("");
+    container.innerHTML = `
+      <table class="table table-dark table-sm table-bordered mb-0">
+        <thead><tr><th>Name</th><th>Tunnel IP</th><th>Added</th><th></th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  } catch {
+    container.innerHTML = `<p class="text-muted small">Could not load peers.</p>`;
+  }
+}
+
+// Init form
+document.getElementById("vpnsvr-init-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  clearEl("vpnsvr-alert");
+  const btn = e.submitter;
+  btn.disabled = true;
+  btn.textContent = "Generating…";
+  try {
+    const data = await postJSON("/api/vpn/server/init", {
+      endpoint: document.getElementById("vs-endpoint").value.trim(),
+      port: parseInt(document.getElementById("vs-port").value, 10),
+      subnet: document.getElementById("vs-subnet").value.trim(),
+      dns: document.getElementById("vs-dns").value.trim(),
+    });
+    if (data.ok) {
+      showAlert("vpnsvr-alert", `✅ Server keys generated. Public key: <code>${escapeHtml(data.public_key)}</code>`, "success");
+      await loadVpnServerStatus();
+    } else {
+      showAlert("vpnsvr-alert", `❌ ${escapeHtml(data.error)}`);
+    }
+  } catch {
+    showAlert("vpnsvr-alert", "❌ Network error.");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🔑 (Re-)Generate Server Keys";
+  }
+});
+
+// Apply on host button
+document.getElementById("btn-vpnsvr-apply").addEventListener("click", async () => {
+  clearEl("vpnsvr-alert");
+  const btn = document.getElementById("btn-vpnsvr-apply");
+  btn.disabled = true;
+  btn.textContent = "Applying…";
+  try {
+    const data = await postJSON("/api/vpn/server/apply", {});
+    if (data.ok) {
+      showAlert("vpnsvr-alert", `✅ ${escapeHtml(data.message)}`, "success");
+      await loadVpnServerStatus();
+    } else {
+      showAlert("vpnsvr-alert", `❌ ${escapeHtml(data.error)}`);
+    }
+  } catch {
+    showAlert("vpnsvr-alert", "❌ Network error.");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "▶ Apply on this Host";
+  }
+});
+
+// Copy server config button
+document.getElementById("btn-vpnsvr-copy-config").addEventListener("click", () => {
+  const text = document.getElementById("vpnsvr-config-text").textContent;
+  navigator.clipboard.writeText(text).then(
+    () => showAlert("vpnsvr-alert", "✅ Server config copied to clipboard.", "success"),
+    () => showAlert("vpnsvr-alert", "❌ Could not access clipboard.", "warning"),
+  );
+});
+
+// Add peer form
+document.getElementById("vpnsvr-peer-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  clearEl("vpnsvr-alert");
+  const name = document.getElementById("vp-name").value.trim();
+  if (!name) { showAlert("vpnsvr-alert", "Please enter a peer name."); return; }
+  const btn = e.submitter;
+  btn.disabled = true;
+  btn.textContent = "Adding…";
+  try {
+    const data = await postJSON("/api/vpn/peers/add", { name });
+    if (data.ok) {
+      document.getElementById("vp-name").value = "";
+      showAlert("vpnsvr-alert", `✅ Peer <strong>${escapeHtml(data.peer.name)}</strong> added — tunnel IP: <code>${escapeHtml(data.peer.address)}</code>`, "success");
+      await renderVpnPeerList();
+      await loadVpnServerConfig();
+    } else {
+      showAlert("vpnsvr-alert", `❌ ${escapeHtml(data.error)}`);
+    }
+  } catch {
+    showAlert("vpnsvr-alert", "❌ Network error.");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "➕ Add Peer";
+  }
+});
+
+// Event delegation: download config & remove buttons in peer list
+document.getElementById("vpnsvr-peer-list").addEventListener("click", async (e) => {
+  const dlBtn = e.target.closest(".vp-dl");
+  if (dlBtn) {
+    const id   = dlBtn.dataset.id;
+    const name = dlBtn.dataset.name;
+    try {
+      const data = await (await fetch(`/api/vpn/peers/${encodeURIComponent(id)}/config`)).json();
+      if (data.ok) {
+        const blob = new Blob([data.config], { type: "text/plain" });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement("a");
+        a.href     = url;
+        a.download = `${name.replace(/\s+/g, "_")}-wg0.conf`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        showAlert("vpnsvr-alert", `❌ ${escapeHtml(data.error)}`);
+      }
+    } catch {
+      showAlert("vpnsvr-alert", "❌ Network error.");
+    }
+    return;
+  }
+
+  const rmBtn = e.target.closest(".vp-remove");
+  if (rmBtn) {
+    const id = rmBtn.dataset.id;
+    try {
+      const data = await postJSON("/api/vpn/peers/remove", { id });
+      if (data.ok) {
+        await renderVpnPeerList();
+        await loadVpnServerConfig();
+      } else {
+        showAlert("vpnsvr-alert", `❌ ${escapeHtml(data.error)}`);
+      }
+    } catch {
+      showAlert("vpnsvr-alert", "❌ Network error.");
+    }
+  }
+});
+
+// Load VPN server status when the tab is shown
+document.getElementById("tab-vpnsvr-btn").addEventListener("shown.bs.tab", loadVpnServerStatus);

@@ -5,6 +5,7 @@ description = "Modem management UI – login, security optimiser, VPN, and speed
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "cryptography==46.0.5",
     "flask==3.1.0",
     "requests==2.32.3",
     "speedtest-cli==2.1.3",
