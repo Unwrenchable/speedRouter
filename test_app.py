@@ -157,6 +157,166 @@ def test_connect_succeeds_when_modem_root_returns_401(client, monkeypatch):
     assert data["gateway"] == "192.168.1.1"
 
 
+def test_connect_falls_back_to_https(client, monkeypatch):
+    """HTTP probe failure triggers an HTTPS retry; connection succeeds over HTTPS."""
+    class _FakeSession:
+        verify = True
+        auth = None
+        def post(self, *a, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def raise_for_status(self): pass
+            return R()
+        def get(self, url, **kw):
+            if url.startswith("http://"):
+                raise req_module.ConnectionError("port 80 closed")
+            class R:
+                status_code = 200
+                ok = True
+            return R()
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+
+    resp = client.post(
+        "/api/connect",
+        json={"gateway": "192.168.0.1", "username": "admin", "password": "pass"},
+    )
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["gateway"] == "192.168.0.1"
+
+
+def test_connect_timeout_on_http_falls_back_to_https(client, monkeypatch):
+    """HTTP timeout also triggers the HTTPS fallback (router accepts TCP/80 but hangs)."""
+    class _FakeSession:
+        verify = True
+        auth = None
+        def post(self, *a, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def raise_for_status(self): pass
+            return R()
+        def get(self, url, **kw):
+            if url.startswith("http://"):
+                raise req_module.Timeout("HTTP timed out")
+            class R:
+                status_code = 200
+                ok = True
+            return R()
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+
+    resp = client.post(
+        "/api/connect",
+        json={"gateway": "192.168.0.1", "username": "admin", "password": "pass"},
+    )
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["gateway"] == "192.168.0.1"
+
+
+def test_connect_https_scheme_stored_in_session(client, monkeypatch):
+    """When the HTTPS fallback succeeds, 'https' is stored in the Flask session."""
+    class _FakeSession:
+        verify = True
+        auth = None
+        def post(self, *a, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def raise_for_status(self): pass
+            return R()
+        def get(self, url, **kw):
+            if url.startswith("http://"):
+                raise req_module.ConnectionError()
+            class R:
+                status_code = 200
+                ok = True
+            return R()
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+    client.post(
+        "/api/connect",
+        json={"gateway": "192.168.0.1", "username": "admin", "password": "pass"},
+    )
+    with client.session_transaction() as sess:
+        assert sess.get("scheme") == "https"
+
+
+def test_connect_http_scheme_stored_in_session(client, monkeypatch):
+    """When the HTTP probe succeeds, 'http' is stored in the Flask session."""
+    class _FakeSession:
+        def post(self, *a, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def raise_for_status(self): pass
+            return R()
+        def get(self, url, **kw):
+            class R:
+                status_code = 200
+                ok = True
+            return R()
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+    client.post(
+        "/api/connect",
+        json={"gateway": "192.168.1.1", "username": "admin", "password": "pass"},
+    )
+    with client.session_transaction() as sess:
+        assert sess.get("scheme") == "http"
+
+
+def test_connect_both_schemes_fail(client, monkeypatch):
+    """If both HTTP and HTTPS probes fail, a 502 with a clear error is returned."""
+    class _FakeSession:
+        verify = True
+        auth = None
+        def post(self, *a, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def raise_for_status(self): pass
+            return R()
+        def get(self, url, **kw):
+            raise req_module.ConnectionError("unreachable")
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+    resp = client.post(
+        "/api/connect",
+        json={"gateway": "192.168.0.1", "username": "admin", "password": "pass"},
+    )
+    data = resp.get_json()
+    assert data["ok"] is False
+    assert resp.status_code == 502
+
+
+def test_connect_both_schemes_timeout_returns_504(client, monkeypatch):
+    """If both HTTP and HTTPS probes time out, a 504 is returned."""
+    class _FakeSession:
+        verify = True
+        auth = None
+        def post(self, *a, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def raise_for_status(self): pass
+            return R()
+        def get(self, url, **kw):
+            raise req_module.Timeout("timed out")
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+    resp = client.post(
+        "/api/connect",
+        json={"gateway": "192.168.0.1", "username": "admin", "password": "pass"},
+    )
+    data = resp.get_json()
+    assert data["ok"] is False
+    assert resp.status_code == 504
+
+
 # ── /api/optimize without session ────────────────────────────────────────────
 
 def test_optimize_requires_connection(client):

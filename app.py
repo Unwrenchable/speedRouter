@@ -17,7 +17,12 @@ from pathlib import Path
 
 import requests
 import speedtest
+import urllib3
 from flask import Flask, jsonify, render_template, request, session
+
+# Suppress InsecureRequestWarning when connecting to routers that use self-signed
+# HTTPS certificates on the LAN.  Users are connecting to their own devices.
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
@@ -120,17 +125,22 @@ def _modem_session(
     login_path: str | None = None,
     user_field: str = "username",
     pass_field: str = "password",
+    scheme: str = "http",
 ) -> requests.Session:
     """Return an authenticated requests.Session for the modem admin panel.
 
     Tries form-based login first (using configurable endpoint/field names),
-    then falls back to HTTP Basic Auth.
+    then falls back to HTTP Basic Auth.  Pass scheme='https' for routers that
+    serve their admin panel over HTTPS with a self-signed certificate;
+    certificate verification is intentionally disabled for LAN-only devices.
     """
     s = requests.Session()
+    if scheme == "https":
+        s.verify = False  # router self-signed certs are expected on the LAN
 
     # Allow per-request or env-var override of login URL
     path = login_path or _C4000BZ_LOGIN_URL or "/login.cgi"
-    login_url = f"http://{gateway}{path}"
+    login_url = f"{scheme}://{gateway}{path}"
 
     try:
         resp = s.post(
@@ -217,22 +227,30 @@ def api_connect():
         if preset_cfg is not None:
             login_path, user_field, pass_field = preset_cfg
 
-    try:
-        s = _modem_session(gateway, username, password, login_path=login_path,
-                           user_field=user_field, pass_field=pass_field)
-        # Quick reachability probe — any response (including 401/403) means modem is up;
-        # result is intentionally discarded, only ConnectionError/Timeout matter here.
-        _ = s.get(f"http://{gateway}/", timeout=5)
-    except requests.ConnectionError:
-        return jsonify({"ok": False, "error": "Cannot reach modem. Check the IP address."}), 502
-    except requests.Timeout:
-        return jsonify({"ok": False, "error": "Modem timed out."}), 504
-    except requests.RequestException as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 502
+    # Probe the modem: try HTTP first, then HTTPS.  Many modern routers serve
+    # their admin panel exclusively over HTTPS with a self-signed certificate;
+    # any HTTP response (including 401/403) confirms the modem is reachable.
+    scheme = "http"
+    for try_scheme in ("http", "https"):
+        try:
+            s = _modem_session(gateway, username, password, login_path=login_path,
+                               user_field=user_field, pass_field=pass_field,
+                               scheme=try_scheme)
+            _ = s.get(f"{try_scheme}://{gateway}/", timeout=5)
+            scheme = try_scheme
+            break  # modem reachable on this scheme
+        except requests.RequestException as exc:
+            if try_scheme == "https":
+                # Both HTTP and HTTPS failed
+                if isinstance(exc, requests.Timeout):
+                    return jsonify({"ok": False, "error": "Modem timed out."}), 504
+                return jsonify({"ok": False, "error": "Cannot reach modem. Check the IP address."}), 502
+            # HTTP failed (any reason) — try HTTPS next
 
     session["gateway"] = gateway
     session["username"] = username
     session["password"] = password
+    session["scheme"] = scheme
     return jsonify({"ok": True, "gateway": gateway})
 
 
@@ -255,42 +273,43 @@ def api_optimize():
     gateway = session["gateway"]
     username = session["username"]
     password = session["password"]
+    scheme = session.get("scheme", "http")
 
     results = []
 
     try:
-        s = _modem_session(gateway, username, password)
+        s = _modem_session(gateway, username, password, scheme=scheme)
 
         settings = [
             # (description, endpoint, payload)
             (
                 "DNS set to 1.1.1.1 / 8.8.8.8",
-                f"http://{gateway}/wan_dns.cgi",
+                f"{scheme}://{gateway}/wan_dns.cgi",
                 {"dns1": "1.1.1.1", "dns2": "8.8.8.8"},
             ),
             (
                 "TR-069 / CWMP (ISP remote management) disabled",
-                f"http://{gateway}/cwmp.cgi",
+                f"{scheme}://{gateway}/cwmp.cgi",
                 {"cwmp_enable": "0"},
             ),
             (
                 "Firewall / SPI enabled",
-                f"http://{gateway}/firewall.cgi",
+                f"{scheme}://{gateway}/firewall.cgi",
                 {"firewall_enable": "1", "spi_enable": "1"},
             ),
             (
                 "UPnP disabled",
-                f"http://{gateway}/upnp.cgi",
+                f"{scheme}://{gateway}/upnp.cgi",
                 {"upnp_enable": "0"},
             ),
             (
                 "MTU set to 1500",
-                f"http://{gateway}/wan_mtu.cgi",
+                f"{scheme}://{gateway}/wan_mtu.cgi",
                 {"mtu": "1500"},
             ),
             (
                 "WPS disabled",
-                f"http://{gateway}/wps.cgi",
+                f"{scheme}://{gateway}/wps.cgi",
                 {"wps_enable": "0"},
             ),
         ]
@@ -350,6 +369,7 @@ def api_vpn_config():
     gateway = session["gateway"]
     username = session["username"]
     password = session["password"]
+    scheme = session.get("scheme", "http")
 
     data = request.get_json(silent=True) or {}
     endpoint = data.get("endpoint", "").strip()
@@ -362,9 +382,9 @@ def api_vpn_config():
         return jsonify({"ok": False, "error": "endpoint, public_key and private_key are required."}), 400
 
     try:
-        s = _modem_session(gateway, username, password)
+        s = _modem_session(gateway, username, password, scheme=scheme)
         resp = s.post(
-            f"http://{gateway}/vpn_wireguard.cgi",
+            f"{scheme}://{gateway}/vpn_wireguard.cgi",
             data={
                 "wg_enable": "1",
                 "wg_endpoint": endpoint,
@@ -451,6 +471,7 @@ def api_robocall_push():
     gateway = session["gateway"]
     username = session["username"]
     password = session["password"]
+    scheme = session.get("scheme", "http")
 
     entries = _load_blocklist()
     if not entries:
@@ -458,12 +479,12 @@ def api_robocall_push():
 
     results = []
     try:
-        s = _modem_session(gateway, username, password)
+        s = _modem_session(gateway, username, password, scheme=scheme)
         for entry in entries:
             network = ipaddress.ip_network(entry["cidr"])
             try:
                 resp = s.post(
-                    f"http://{gateway}/firewall_block.cgi",
+                    f"{scheme}://{gateway}/firewall_block.cgi",
                     data={
                         "ip_block": str(network.network_address),
                         "ip_mask": str(network.netmask),
