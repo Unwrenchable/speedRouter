@@ -711,3 +711,143 @@ def test_main_cli_args_override(monkeypatch):
 
     assert captured["host"] == "0.0.0.0"
     assert captured["port"] == 9000
+
+
+# ── VPN Server ────────────────────────────────────────────────────────────────
+
+def test_vpn_keygen(client):
+    """Keygen endpoint returns a valid base64 key pair."""
+    import base64
+    resp = client.get("/api/vpn/keygen")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    # Both keys must be 32-byte Curve25519 keys encoded as 44-char base64
+    assert len(base64.b64decode(data["private_key"])) == 32
+    assert len(base64.b64decode(data["public_key"])) == 32
+
+
+def test_vpn_server_status_not_initialized(client, tmp_path, monkeypatch):
+    """Server status returns initialized=False before setup."""
+    monkeypatch.setattr(app_module, "_VPN_SERVER_PATH", tmp_path / "vpn_server.json")
+    resp = client.get("/api/vpn/server/status")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["initialized"] is False
+
+
+def test_vpn_server_init(client, tmp_path, monkeypatch):
+    """Server init generates keys and persists server config."""
+    monkeypatch.setattr(app_module, "_VPN_SERVER_PATH", tmp_path / "vpn_server.json")
+    monkeypatch.setattr(app_module, "_VPN_PEERS_PATH", tmp_path / "vpn_peers.json")
+    resp = client.post("/api/vpn/server/init", json={
+        "port": 51820, "subnet": "10.9.0.0/24", "endpoint": "1.2.3.4:51820", "dns": "1.1.1.1"
+    })
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert "public_key" in data
+    assert data["subnet"] == "10.9.0.0/24"
+
+
+def test_vpn_server_init_invalid_port(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "_VPN_SERVER_PATH", tmp_path / "vpn_server.json")
+    resp = client.post("/api/vpn/server/init", json={"port": 99999})
+    assert resp.status_code == 400
+
+
+def test_vpn_server_init_invalid_subnet(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "_VPN_SERVER_PATH", tmp_path / "vpn_server.json")
+    resp = client.post("/api/vpn/server/init", json={"subnet": "not-a-cidr"})
+    assert resp.status_code == 400
+
+
+def test_vpn_server_config_not_initialized(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "_VPN_SERVER_PATH", tmp_path / "vpn_server.json")
+    resp = client.get("/api/vpn/server/config")
+    assert resp.status_code == 400
+
+
+def test_vpn_server_config(client, tmp_path, monkeypatch):
+    """Server config returns valid wg0.conf content after init."""
+    monkeypatch.setattr(app_module, "_VPN_SERVER_PATH", tmp_path / "vpn_server.json")
+    monkeypatch.setattr(app_module, "_VPN_PEERS_PATH", tmp_path / "vpn_peers.json")
+    client.post("/api/vpn/server/init", json={"port": 51820, "subnet": "10.8.0.0/24"})
+    resp = client.get("/api/vpn/server/config")
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert "[Interface]" in data["config"]
+    assert "ListenPort = 51820" in data["config"]
+
+
+def test_vpn_peers_lifecycle(client, tmp_path, monkeypatch):
+    """Add, list, download config, and remove a peer."""
+    monkeypatch.setattr(app_module, "_VPN_SERVER_PATH", tmp_path / "vpn_server.json")
+    monkeypatch.setattr(app_module, "_VPN_PEERS_PATH", tmp_path / "vpn_peers.json")
+    client.post("/api/vpn/server/init", json={"port": 51820, "subnet": "10.8.0.0/24"})
+
+    # add
+    resp = client.post("/api/vpn/peers/add", json={"name": "Laptop"})
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    peer_id = data["peer"]["id"]
+    assert data["peer"]["address"] == "10.8.0.2"  # server takes .1, first peer gets .2
+
+    # list (no private key exposed)
+    resp = client.get("/api/vpn/peers")
+    peers = resp.get_json()["peers"]
+    assert len(peers) == 1
+    assert "private_key" not in peers[0]
+
+    # client config
+    resp = client.get(f"/api/vpn/peers/{peer_id}/config")
+    cfg = resp.get_json()
+    assert cfg["ok"] is True
+    assert "[Peer]" in cfg["config"]
+    assert "AllowedIPs = 0.0.0.0/0" in cfg["config"]
+    assert cfg["name"] == "Laptop"
+
+    # remove
+    resp = client.post("/api/vpn/peers/remove", json={"id": peer_id})
+    assert resp.get_json()["removed"] == 1
+    assert client.get("/api/vpn/peers").get_json()["peers"] == []
+
+
+def test_vpn_add_peer_no_server(client, tmp_path, monkeypatch):
+    """Adding a peer before server init returns an error."""
+    monkeypatch.setattr(app_module, "_VPN_SERVER_PATH", tmp_path / "vpn_server.json")
+    monkeypatch.setattr(app_module, "_VPN_PEERS_PATH", tmp_path / "vpn_peers.json")
+    resp = client.post("/api/vpn/peers/add", json={"name": "Phone"})
+    assert resp.status_code == 400
+
+
+def test_vpn_peer_config_not_found(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "_VPN_SERVER_PATH", tmp_path / "vpn_server.json")
+    monkeypatch.setattr(app_module, "_VPN_PEERS_PATH", tmp_path / "vpn_peers.json")
+    client.post("/api/vpn/server/init", json={})
+    resp = client.get("/api/vpn/peers/doesnotexist/config")
+    assert resp.status_code == 404
+
+
+def test_vpn_wg_config_format(client, tmp_path, monkeypatch):
+    """Server and client configs contain all required WireGuard fields."""
+    monkeypatch.setattr(app_module, "_VPN_SERVER_PATH", tmp_path / "vpn_server.json")
+    monkeypatch.setattr(app_module, "_VPN_PEERS_PATH", tmp_path / "vpn_peers.json")
+    client.post("/api/vpn/server/init", json={"endpoint": "5.6.7.8:51820", "dns": "8.8.8.8"})
+    client.post("/api/vpn/peers/add", json={"name": "Phone"})
+
+    peers = client.get("/api/vpn/peers").get_json()["peers"]
+    peer_id = peers[0]["id"]
+
+    svr_cfg = client.get("/api/vpn/server/config").get_json()["config"]
+    assert "PrivateKey" in svr_cfg
+    assert "Address = 10.8.0.1/24" in svr_cfg
+    assert "[Peer]" in svr_cfg
+
+    cli_cfg = client.get(f"/api/vpn/peers/{peer_id}/config").get_json()["config"]
+    assert "Address = 10.8.0.2/32" in cli_cfg
+    assert "DNS = 8.8.8.8" in cli_cfg
+    assert "Endpoint = 5.6.7.8:51820" in cli_cfg
+    assert "PersistentKeepalive = 25" in cli_cfg
