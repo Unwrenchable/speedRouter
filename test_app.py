@@ -2,8 +2,10 @@
 
 import json
 import pytest
+import requests as req_module
 
 from app import app as flask_app
+import app as app_module
 from agent_tools.registry import load_agents, load_profiles, find_agents, assess_agent_access, recommend_profile
 
 
@@ -21,6 +23,23 @@ def test_index(client):
     resp = client.get("/")
     assert resp.status_code == 200
     assert b"speedRouter" in resp.data
+
+
+def test_csp_header_present(client):
+    """Every response must include a Content-Security-Policy header."""
+    resp = client.get("/")
+    assert "Content-Security-Policy" in resp.headers
+    csp = resp.headers["Content-Security-Policy"]
+    # eval must NOT be explicitly allowed
+    assert "unsafe-eval" not in csp
+    # scripts only from self
+    assert "script-src 'self'" in csp
+
+
+def test_x_frame_options_header(client):
+    """X-Frame-Options: DENY must be set to prevent clickjacking."""
+    resp = client.get("/")
+    assert resp.headers.get("X-Frame-Options") == "DENY"
 
 
 # ── /api/network/gateway ──────────────────────────────────────────────────────
@@ -45,6 +64,32 @@ def test_gateway_endpoint_failure(client, monkeypatch):
     data = resp.get_json()
     assert data["ok"] is False
     assert "error" in data
+
+
+# ── /api/status ───────────────────────────────────────────────────────────────
+
+def test_status_not_connected(client):
+    """Without a session, /api/status returns connected=False."""
+    resp = client.get("/api/status")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["connected"] is False
+
+
+def test_status_connected(client):
+    """With an active session, /api/status returns connected=True and the gateway."""
+    with client.session_transaction() as sess:
+        sess["gateway"] = "192.168.1.1"
+        sess["username"] = "admin"
+        sess["password"] = "pass"
+
+    resp = client.get("/api/status")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["connected"] is True
+    assert data["gateway"] == "192.168.1.1"
 
 
 # ── /api/connect ──────────────────────────────────────────────────────────────
@@ -77,6 +122,39 @@ def test_connect_unreachable_modem(client):
     # Must get an error response (502 or 504), never 200 ok
     data = resp.get_json()
     assert data["ok"] is False
+
+
+def test_connect_succeeds_when_modem_root_returns_401(client, monkeypatch):
+    """Connection should succeed even if the modem root URL returns 401.
+
+    Many routers return 401 on their homepage; the old code called
+    probe.raise_for_status() which would incorrectly treat this as a failure.
+    """
+    class _FakeResponse:
+        status_code = 401
+        ok = False
+        def raise_for_status(self):
+            raise req_module.HTTPError("401 Unauthorized")
+
+    class _FakeSession:
+        def post(self, *args, **kwargs):
+            r = _FakeResponse()
+            r.status_code = 200
+            r.ok = True
+            r.raise_for_status = lambda: None
+            return r
+        def get(self, *args, **kwargs):
+            return _FakeResponse()
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+
+    resp = client.post(
+        "/api/connect",
+        json={"gateway": "192.168.1.1", "username": "admin", "password": "pass"},
+    )
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["gateway"] == "192.168.1.1"
 
 
 # ── /api/optimize without session ────────────────────────────────────────────

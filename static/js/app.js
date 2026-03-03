@@ -56,6 +56,15 @@ function loadPrefs() {
   if (prefs.gateway)  gwField.value   = prefs.gateway;
   if (prefs.username) userField.value = prefs.username;
 
+  // Restore connected state from server session (survives page reload)
+  try {
+    const statusResp = await fetch("/api/status");
+    const statusData = await statusResp.json();
+    if (statusData.connected) {
+      setConnected(statusData.gateway);
+    }
+  } catch { /* offline or server unavailable – silently skip */ }
+
   // Auto-detect gateway only if field is still empty
   if (!gwField.value) {
     try {

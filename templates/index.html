@@ -18,16 +18,16 @@
 <!-- ── Tab navigation ────────────────────────────────────────────────────── -->
 <div class="container-lg mt-3">
   <ul class="nav nav-tabs nav-fill" id="mainTabs" role="tablist">
-    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-connect">🔌 Connect</button></li>
-    <li class="nav-item"><button class="nav-link"        data-bs-toggle="tab" data-bs-target="#tab-optimize">🔒 Optimise</button></li>
-    <li class="nav-item"><button class="nav-link"        data-bs-toggle="tab" data-bs-target="#tab-speed">📶 Speed Test</button></li>
-    <li class="nav-item"><button class="nav-link"        data-bs-toggle="tab" data-bs-target="#tab-vpn">🔐 VPN</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link active" id="tab-connect-btn" type="button" role="tab" data-bs-toggle="tab" data-bs-target="#tab-connect" aria-controls="tab-connect" aria-selected="true">🔌 Connect</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link"        id="tab-optimize-btn" type="button" role="tab" data-bs-toggle="tab" data-bs-target="#tab-optimize" aria-controls="tab-optimize" aria-selected="false">🔒 Optimise</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link"        id="tab-speed-btn"    type="button" role="tab" data-bs-toggle="tab" data-bs-target="#tab-speed"    aria-controls="tab-speed"    aria-selected="false">📶 Speed Test</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link"        id="tab-vpn-btn"      type="button" role="tab" data-bs-toggle="tab" data-bs-target="#tab-vpn"      aria-controls="tab-vpn"      aria-selected="false">🔐 VPN</button></li>
   </ul>
 
   <div class="tab-content mt-3" id="mainTabsContent">
 
     <!-- ── Connect tab ───────────────────────────────────────────────────── -->
-    <div class="tab-pane fade show active" id="tab-connect">
+    <div class="tab-pane fade show active" id="tab-connect" role="tabpanel" aria-labelledby="tab-connect-btn" tabindex="0">
       <div class="card bg-dark border-secondary shadow">
         <div class="card-body">
           <h5 class="card-title">Modem / Router Login</h5>
@@ -64,7 +64,7 @@
     </div>
 
     <!-- ── Optimise tab ──────────────────────────────────────────────────── -->
-    <div class="tab-pane fade" id="tab-optimize">
+    <div class="tab-pane fade" id="tab-optimize" role="tabpanel" aria-labelledby="tab-optimize-btn" tabindex="0">
       <div class="card bg-dark border-secondary shadow">
         <div class="card-body">
           <h5 class="card-title">Security &amp; Performance Optimiser</h5>
@@ -86,7 +86,7 @@
     </div>
 
     <!-- ── Speed test tab ────────────────────────────────────────────────── -->
-    <div class="tab-pane fade" id="tab-speed">
+    <div class="tab-pane fade" id="tab-speed" role="tabpanel" aria-labelledby="tab-speed-btn" tabindex="0">
       <div class="card bg-dark border-secondary shadow">
         <div class="card-body">
           <h5 class="card-title">Internet Speed Test</h5>
@@ -105,7 +105,7 @@
     </div>
 
     <!-- ── VPN tab ───────────────────────────────────────────────────────── -->
-    <div class="tab-pane fade" id="tab-vpn">
+    <div class="tab-pane fade" id="tab-vpn" role="tabpanel" aria-labelledby="tab-vpn-btn" tabindex="0">
       <div class="card bg-dark border-secondary shadow">
         <div class="card-body">
           <h5 class="card-title">WireGuard VPN Configuration</h5>

@@ -111,6 +111,24 @@ def _modem_session(
 # Routes
 # ──────────────────────────────────────────────────────────────────────────────
 
+@app.after_request
+def set_security_headers(response):
+    """Apply security headers, including a Content-Security-Policy, to every response."""
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "font-src 'self'; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'; "
+        "form-action 'self'"
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    return response
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -123,6 +141,14 @@ def api_network_gateway():
     if gateway:
         return jsonify({"ok": True, "gateway": gateway})
     return jsonify({"ok": False, "error": "Could not detect gateway."}), 200
+
+
+@app.route("/api/status")
+def api_status():
+    """Return current modem connection state so the UI can restore itself after a page reload."""
+    if "gateway" in session:
+        return jsonify({"ok": True, "connected": True, "gateway": session["gateway"]})
+    return jsonify({"ok": True, "connected": False})
 
 
 @app.route("/api/connect", methods=["POST"])
@@ -155,9 +181,9 @@ def api_connect():
     try:
         s = _modem_session(gateway, username, password, login_path=login_path,
                            user_field=user_field, pass_field=pass_field)
-        # Quick reachability probe
-        probe = s.get(f"http://{gateway}/", timeout=5)
-        probe.raise_for_status()
+        # Quick reachability probe — any response (including 401/403) means modem is up;
+        # result is intentionally discarded, only ConnectionError/Timeout matter here.
+        _ = s.get(f"http://{gateway}/", timeout=5)
     except requests.ConnectionError:
         return jsonify({"ok": False, "error": "Cannot reach modem. Check the IP address."}), 502
     except requests.Timeout:
