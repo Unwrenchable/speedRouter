@@ -191,3 +191,74 @@ def test_recommend_profile():
     profiles = load_profiles()
     profile = recommend_profile(agents["speedrouter-orchestrator"], profiles)
     assert profile.name == "power"
+
+
+# ── CLI entry point ───────────────────────────────────────────────────────────
+
+def test_main_exists():
+    """main() must be importable and callable without errors (no-start test)."""
+    from app import main
+    assert callable(main)
+
+
+def test_main_default_host_is_localhost(monkeypatch):
+    """main() passes host=127.0.0.1 to app.run() when no env var is set."""
+    import app as app_module
+
+    monkeypatch.delenv("SPEEDROUTER_HOST", raising=False)
+    monkeypatch.delenv("SPEEDROUTER_PORT", raising=False)
+
+    captured = {}
+
+    def fake_run(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(app_module.app, "run", fake_run)
+    monkeypatch.setattr("sys.argv", ["speedrouter"])
+
+    app_module.main()
+
+    assert captured["host"] == "127.0.0.1"
+    assert captured["port"] == 5000
+
+
+def test_main_env_override(monkeypatch):
+    """SPEEDROUTER_HOST and SPEEDROUTER_PORT env vars are passed to app.run()."""
+    import app as app_module
+
+    monkeypatch.setenv("SPEEDROUTER_HOST", "0.0.0.0")
+    monkeypatch.setenv("SPEEDROUTER_PORT", "8080")
+
+    captured = {}
+
+    def fake_run(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(app_module.app, "run", fake_run)
+    monkeypatch.setattr("sys.argv", ["speedrouter"])
+
+    app_module.main()
+
+    assert captured["host"] == "0.0.0.0"
+    assert captured["port"] == 8080
+
+
+def test_main_cli_args_override(monkeypatch):
+    """--host and --port CLI flags are passed to app.run()."""
+    import app as app_module
+
+    monkeypatch.delenv("SPEEDROUTER_HOST", raising=False)
+    monkeypatch.delenv("SPEEDROUTER_PORT", raising=False)
+
+    captured = {}
+
+    def fake_run(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(app_module.app, "run", fake_run)
+    monkeypatch.setattr("sys.argv", ["speedrouter", "--host", "0.0.0.0", "--port", "9000"])
+
+    app_module.main()
+
+    assert captured["host"] == "0.0.0.0"
+    assert captured["port"] == 9000
