@@ -18,16 +18,17 @@
 <!-- ── Tab navigation ────────────────────────────────────────────────────── -->
 <div class="container-lg mt-3">
   <ul class="nav nav-tabs nav-fill" id="mainTabs" role="tablist">
-    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-connect">🔌 Connect</button></li>
-    <li class="nav-item"><button class="nav-link"        data-bs-toggle="tab" data-bs-target="#tab-optimize">🔒 Optimise</button></li>
-    <li class="nav-item"><button class="nav-link"        data-bs-toggle="tab" data-bs-target="#tab-speed">📶 Speed Test</button></li>
-    <li class="nav-item"><button class="nav-link"        data-bs-toggle="tab" data-bs-target="#tab-vpn">🔐 VPN</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link active" id="tab-connect-btn" type="button" role="tab" data-bs-toggle="tab" data-bs-target="#tab-connect" aria-controls="tab-connect" aria-selected="true">🔌 Connect</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link"        id="tab-optimize-btn" type="button" role="tab" data-bs-toggle="tab" data-bs-target="#tab-optimize" aria-controls="tab-optimize" aria-selected="false">🔒 Optimise</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link"        id="tab-speed-btn"    type="button" role="tab" data-bs-toggle="tab" data-bs-target="#tab-speed"    aria-controls="tab-speed"    aria-selected="false">📶 Speed Test</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link"        id="tab-vpn-btn"      type="button" role="tab" data-bs-toggle="tab" data-bs-target="#tab-vpn"      aria-controls="tab-vpn"      aria-selected="false">🔐 VPN</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link"        id="tab-robocall-btn" type="button" role="tab" data-bs-toggle="tab" data-bs-target="#tab-robocall" aria-controls="tab-robocall" aria-selected="false">📵 Robocall Shield</button></li>
   </ul>
 
   <div class="tab-content mt-3" id="mainTabsContent">
 
     <!-- ── Connect tab ───────────────────────────────────────────────────── -->
-    <div class="tab-pane fade show active" id="tab-connect">
+    <div class="tab-pane fade show active" id="tab-connect" role="tabpanel" aria-labelledby="tab-connect-btn" tabindex="0">
       <div class="card bg-dark border-secondary shadow">
         <div class="card-body">
           <h5 class="card-title">Modem / Router Login</h5>
@@ -64,7 +65,7 @@
     </div>
 
     <!-- ── Optimise tab ──────────────────────────────────────────────────── -->
-    <div class="tab-pane fade" id="tab-optimize">
+    <div class="tab-pane fade" id="tab-optimize" role="tabpanel" aria-labelledby="tab-optimize-btn" tabindex="0">
       <div class="card bg-dark border-secondary shadow">
         <div class="card-body">
           <h5 class="card-title">Security &amp; Performance Optimiser</h5>
@@ -86,7 +87,7 @@
     </div>
 
     <!-- ── Speed test tab ────────────────────────────────────────────────── -->
-    <div class="tab-pane fade" id="tab-speed">
+    <div class="tab-pane fade" id="tab-speed" role="tabpanel" aria-labelledby="tab-speed-btn" tabindex="0">
       <div class="card bg-dark border-secondary shadow">
         <div class="card-body">
           <h5 class="card-title">Internet Speed Test</h5>
@@ -105,7 +106,7 @@
     </div>
 
     <!-- ── VPN tab ───────────────────────────────────────────────────────── -->
-    <div class="tab-pane fade" id="tab-vpn">
+    <div class="tab-pane fade" id="tab-vpn" role="tabpanel" aria-labelledby="tab-vpn-btn" tabindex="0">
       <div class="card bg-dark border-secondary shadow">
         <div class="card-body">
           <h5 class="card-title">WireGuard VPN Configuration</h5>
@@ -145,6 +146,47 @@
           </form>
 
           <div id="vpn-alert" class="mt-3"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Robocall Shield tab ────────────────────────────────────────────── -->
+    <div class="tab-pane fade" id="tab-robocall" role="tabpanel" aria-labelledby="tab-robocall-btn" tabindex="0">
+      <div class="card bg-dark border-secondary shadow">
+        <div class="card-body">
+          <h5 class="card-title">📵 Robocall Shield</h5>
+          <p class="text-muted small">
+            Block known robocall and VoIP spam IP addresses at your modem's firewall.
+            Designed for always-on use — speedRouter running on a Raspberry Pi will keep your
+            blocklist active 24/7. Add an IP or CIDR range below, then push the rules to your modem.
+          </p>
+
+          <form id="robocall-form" novalidate class="row g-2 mb-3">
+            <div class="col-sm-5">
+              <label for="rb-cidr" class="form-label">IP address or CIDR to block</label>
+              <input id="rb-cidr" type="text" class="form-control bg-dark text-light border-secondary"
+                     placeholder="1.2.3.0/24 or 1.2.3.4" required />
+            </div>
+            <div class="col-sm-5">
+              <label for="rb-label" class="form-label">Label <span class="text-muted">(optional)</span></label>
+              <input id="rb-label" type="text" class="form-control bg-dark text-light border-secondary"
+                     placeholder="e.g. VoIP Spam Provider" />
+            </div>
+            <div class="col-sm-2 d-flex align-items-end">
+              <button type="submit" class="btn btn-danger w-100">Block</button>
+            </div>
+          </form>
+
+          <div id="robocall-list" class="mb-3">
+            <p class="text-muted small">Loading…</p>
+          </div>
+
+          <button type="button" id="btn-robocall-push" class="btn btn-warning text-dark">Push Rules to Modem</button>
+          <div class="form-text text-muted mt-1">
+            Connect to your modem first (🔌 Connect tab), then push all blocked IPs as firewall rules.
+          </div>
+
+          <div id="robocall-alert" class="mt-3"></div>
         </div>
       </div>
     </div>

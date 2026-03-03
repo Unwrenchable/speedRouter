@@ -21,6 +21,14 @@ async function postJSON(url, body) {
   return resp.json();
 }
 
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 // ── localStorage helpers (gateway + username only – never password) ───────────
 
 const LS_GATEWAY  = "speedrouter_gateway";
@@ -55,6 +63,15 @@ function loadPrefs() {
   // Pre-fill saved values first
   if (prefs.gateway)  gwField.value   = prefs.gateway;
   if (prefs.username) userField.value = prefs.username;
+
+  // Restore connected state from server session (survives page reload)
+  try {
+    const statusResp = await fetch("/api/status");
+    const statusData = await statusResp.json();
+    if (statusData.connected) {
+      setConnected(statusData.gateway);
+    }
+  } catch { /* offline or server unavailable – silently skip */ }
 
   // Auto-detect gateway only if field is still empty
   if (!gwField.value) {
@@ -259,3 +276,108 @@ document.getElementById("vpn-form").addEventListener("submit", async (e) => {
     btn.textContent = "Push VPN Config to Modem";
   }
 });
+
+// ── Robocall Shield ───────────────────────────────────────────────────────────
+
+async function renderRobocallList() {
+  const container = document.getElementById("robocall-list");
+  try {
+    const data = await (await fetch("/api/robocall/list")).json();
+    if (!data.ok || data.entries.length === 0) {
+      container.innerHTML = `<p class="text-muted small">No blocked IPs yet. Add entries above.</p>`;
+      return;
+    }
+    const rows = data.entries.map((e) => `
+      <tr>
+        <td class="small">${escapeHtml(e.label)}</td>
+        <td class="small font-monospace">${escapeHtml(e.cidr)}</td>
+        <td class="small text-muted">${escapeHtml(e.added)}</td>
+        <td><button type="button" class="btn btn-sm btn-outline-danger py-0 rb-remove"
+            data-cidr="${escapeHtml(e.cidr)}">Remove</button></td>
+      </tr>`).join("");
+    container.innerHTML = `
+      <table class="table table-dark table-sm table-bordered mb-0">
+        <thead><tr><th>Label</th><th>IP / CIDR</th><th>Added</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  } catch {
+    container.innerHTML = `<p class="text-muted small">Could not load blocklist.</p>`;
+  }
+}
+
+// Event delegation for dynamically rendered Remove buttons
+document.getElementById("robocall-list").addEventListener("click", async (e) => {
+  const btn = e.target.closest(".rb-remove");
+  if (!btn) return;
+  const cidr = btn.dataset.cidr;
+  try {
+    const data = await postJSON("/api/robocall/unblock", { cidr });
+    if (data.ok) await renderRobocallList();
+  } catch { /* ignore */ }
+});
+
+document.getElementById("robocall-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  clearEl("robocall-alert");
+
+  const cidr  = document.getElementById("rb-cidr").value.trim();
+  const label = document.getElementById("rb-label").value.trim();
+
+  if (!cidr) {
+    showAlert("robocall-alert", "Please enter an IP address or CIDR.");
+    return;
+  }
+
+  try {
+    const data = await postJSON("/api/robocall/block", { cidr, label });
+    if (data.ok) {
+      document.getElementById("rb-cidr").value  = "";
+      document.getElementById("rb-label").value = "";
+      await renderRobocallList();
+    } else {
+      showAlert("robocall-alert", `❌ ${data.error}`);
+    }
+  } catch {
+    showAlert("robocall-alert", "❌ Network error.");
+  }
+});
+
+document.getElementById("btn-robocall-push").addEventListener("click", async () => {
+  clearEl("robocall-alert");
+
+  if (!connected) {
+    showAlert("robocall-alert", "Connect to your modem first (use the 🔌 Connect tab).", "warning");
+    return;
+  }
+
+  const btn = document.getElementById("btn-robocall-push");
+  btn.disabled = true;
+  btn.textContent = "Pushing…";
+
+  try {
+    const data = await postJSON("/api/robocall/push", {});
+    if (data.ok) {
+      if (data.message) {
+        showAlert("robocall-alert", `ℹ️ ${data.message}`, "info");
+      } else {
+        const rows = data.results.map((r) => {
+          const icon = r.status.startsWith("pushed") ? "✅" : "⚠️";
+          return `<div class="result-row"><span>${icon}</span><span><strong>${escapeHtml(r.entry)}</strong> (${escapeHtml(r.cidr)}) — ${escapeHtml(r.status)}</span></div>`;
+        }).join("");
+        document.getElementById("robocall-alert").innerHTML =
+          `<div class="card bg-dark border-secondary p-3 mt-2">${rows}</div>`;
+      }
+    } else {
+      showAlert("robocall-alert", `❌ ${data.error}`);
+    }
+  } catch {
+    showAlert("robocall-alert", "❌ Network error.");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Push Rules to Modem";
+  }
+});
+
+// Load the robocall list whenever the tab is first shown, and on initial page load
+document.getElementById("tab-robocall-btn").addEventListener("shown.bs.tab", renderRobocallList);
+renderRobocallList();
