@@ -21,6 +21,54 @@ async function postJSON(url, body) {
   return resp.json();
 }
 
+// ── localStorage helpers (gateway + username only – never password) ───────────
+
+const LS_GATEWAY  = "speedrouter_gateway";
+const LS_USERNAME = "speedrouter_username";
+
+function savePrefs(gateway, username) {
+  try {
+    localStorage.setItem(LS_GATEWAY,  gateway);
+    localStorage.setItem(LS_USERNAME, username);
+  } catch { /* ignore storage errors */ }
+}
+
+function loadPrefs() {
+  try {
+    return {
+      gateway:  localStorage.getItem(LS_GATEWAY)  || "",
+      username: localStorage.getItem(LS_USERNAME) || "",
+    };
+  } catch {
+    return { gateway: "", username: "" };
+  }
+}
+
+// ── Auto-fill on page load ───────────────────────────────────────────────────
+
+(async function initForm() {
+  const gwField       = document.getElementById("f-gateway");
+  const userField     = document.getElementById("f-username");
+  const gwHint        = document.getElementById("f-gateway-hint");
+  const prefs         = loadPrefs();
+
+  // Pre-fill saved values first
+  if (prefs.gateway)  gwField.value   = prefs.gateway;
+  if (prefs.username) userField.value = prefs.username;
+
+  // Auto-detect gateway only if field is still empty
+  if (!gwField.value) {
+    try {
+      const resp = await fetch("/api/network/gateway");
+      const data = await resp.json();
+      if (data.ok && data.gateway && !gwField.value) {
+        gwField.value = data.gateway;
+        if (gwHint) gwHint.classList.remove("d-none");
+      }
+    } catch { /* network unavailable – silently skip */ }
+  }
+})();
+
 // ── Connection state ─────────────────────────────────────────────────────────
 
 let connected = false;
@@ -61,6 +109,7 @@ document.getElementById("connect-form").addEventListener("submit", async (e) => 
   try {
     const data = await postJSON("/api/connect", { gateway, username, password });
     if (data.ok) {
+      savePrefs(gateway, username);
       setConnected(data.gateway);
       showAlert("connect-alert", `✅ Connected to <strong>${data.gateway}</strong>`, "success");
       document.getElementById("f-password").value = "";

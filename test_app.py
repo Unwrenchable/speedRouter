@@ -23,7 +23,31 @@ def test_index(client):
     assert b"speedRouter" in resp.data
 
 
-# ── /api/connect validation ───────────────────────────────────────────────────
+# ── /api/network/gateway ──────────────────────────────────────────────────────
+
+def test_gateway_endpoint_success(client, monkeypatch):
+    """When gateway detection succeeds, endpoint returns ok=True and the IP."""
+    import app as app_module
+    monkeypatch.setattr(app_module, "_detect_gateway", lambda: "192.168.1.1")
+    resp = client.get("/api/network/gateway")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["gateway"] == "192.168.1.1"
+
+
+def test_gateway_endpoint_failure(client, monkeypatch):
+    """When gateway detection fails, endpoint returns ok=False."""
+    import app as app_module
+    monkeypatch.setattr(app_module, "_detect_gateway", lambda: None)
+    resp = client.get("/api/network/gateway")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is False
+    assert "error" in data
+
+
+# ── /api/connect ──────────────────────────────────────────────────────────────
 
 def test_connect_missing_fields(client):
     resp = client.post("/api/connect", json={})

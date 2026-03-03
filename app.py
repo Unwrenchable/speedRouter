@@ -7,7 +7,10 @@ Provides: modem login, security/performance optimiser, ISP-proofing,
 import argparse
 import ipaddress
 import os
+import platform
+import re
 import secrets
+import subprocess
 
 import requests
 import speedtest
@@ -25,15 +28,75 @@ def _safe_ip(value: str) -> str:
     return str(ipaddress.ip_address(value.strip()))
 
 
-def _modem_session(gateway: str, username: str, password: str) -> requests.Session:
-    """Return an authenticated requests.Session for the modem admin panel."""
+def _detect_gateway() -> str | None:
+    """Return the default gateway IP string, or None if detection fails."""
+    system = platform.system()
+    try:
+        if system == "Windows":
+            out = subprocess.check_output(["ipconfig"], timeout=5, text=True, stderr=subprocess.DEVNULL)
+            for line in out.splitlines():
+                m = re.search(r"Default Gateway[.\s]+:\s*([\d.]+)", line)
+                if m and m.group(1) != "0.0.0.0":
+                    return m.group(1)
+        elif system == "Darwin":
+            out = subprocess.check_output(
+                ["route", "-n", "get", "default"], timeout=5, text=True, stderr=subprocess.DEVNULL
+            )
+            for line in out.splitlines():
+                m = re.search(r"gateway:\s*([\d.]+)", line)
+                if m:
+                    return m.group(1)
+        else:
+            # Linux
+            out = subprocess.check_output(
+                ["ip", "route", "show", "default"], timeout=5, text=True, stderr=subprocess.DEVNULL
+            )
+            m = re.search(r"default via ([\d.]+)", out)
+            if m:
+                return m.group(1)
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+# ── Router login strategies ───────────────────────────────────────────────────
+
+# CenturyLink C4000BZ preset – configurable via env vars or request params
+_C4000BZ_LOGIN_URL = os.environ.get("ROUTER_LOGIN_URL", "")
+_C4000BZ_USER_FIELD = os.environ.get("ROUTER_USER_FIELD", "username")
+_C4000BZ_PASS_FIELD = os.environ.get("ROUTER_PASS_FIELD", "password")
+
+# Known router presets: name → (login_path, user_field, pass_field)
+ROUTER_PRESETS = {
+    "centurylink_c4000bz": ("/login.cgi", "username", "password"),
+    "generic_form": ("/login.cgi", "username", "password"),
+    "generic_basic": None,  # HTTP Basic Auth only
+}
+
+
+def _modem_session(
+    gateway: str,
+    username: str,
+    password: str,
+    login_path: str | None = None,
+    user_field: str = "username",
+    pass_field: str = "password",
+) -> requests.Session:
+    """Return an authenticated requests.Session for the modem admin panel.
+
+    Tries form-based login first (using configurable endpoint/field names),
+    then falls back to HTTP Basic Auth.
+    """
     s = requests.Session()
-    # Common router login endpoint – try form-based login first
-    login_url = f"http://{gateway}/login.cgi"
+
+    # Allow per-request or env-var override of login URL
+    path = login_path or _C4000BZ_LOGIN_URL or "/login.cgi"
+    login_url = f"http://{gateway}{path}"
+
     try:
         resp = s.post(
             login_url,
-            data={"username": username, "password": password},
+            data={user_field: username, pass_field: password},
             timeout=5,
             allow_redirects=True,
         )
@@ -53,6 +116,15 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/api/network/gateway")
+def api_network_gateway():
+    """Return the host machine's default gateway IP address."""
+    gateway = _detect_gateway()
+    if gateway:
+        return jsonify({"ok": True, "gateway": gateway})
+    return jsonify({"ok": False, "error": "Could not detect gateway."}), 200
+
+
 @app.route("/api/connect", methods=["POST"])
 def api_connect():
     """Authenticate with the modem admin panel and persist session info."""
@@ -60,6 +132,8 @@ def api_connect():
     gateway = data.get("gateway", "").strip()
     username = data.get("username", "").strip()
     password = data.get("password", "")
+    # Optional: router preset name (e.g. "centurylink_c4000bz")
+    preset = data.get("preset", "").strip().lower()
 
     if not gateway or not username or not password:
         return jsonify({"ok": False, "error": "All fields are required."}), 400
@@ -69,8 +143,18 @@ def api_connect():
     except ValueError:
         return jsonify({"ok": False, "error": "Invalid gateway IP address."}), 400
 
+    # Resolve login parameters from preset (if provided)
+    login_path = None
+    user_field = _C4000BZ_USER_FIELD
+    pass_field = _C4000BZ_PASS_FIELD
+    if preset and preset in ROUTER_PRESETS:
+        preset_cfg = ROUTER_PRESETS[preset]
+        if preset_cfg is not None:
+            login_path, user_field, pass_field = preset_cfg
+
     try:
-        s = _modem_session(gateway, username, password)
+        s = _modem_session(gateway, username, password, login_path=login_path,
+                           user_field=user_field, pass_field=pass_field)
         # Quick reachability probe
         probe = s.get(f"http://{gateway}/", timeout=5)
         probe.raise_for_status()
