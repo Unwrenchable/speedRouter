@@ -119,9 +119,11 @@ def test_connect_unreachable_modem(client):
         "/api/connect",
         json={"gateway": "192.0.2.1", "username": "admin", "password": "pass"},
     )
-    # Must get an error response (502 or 504), never 200 ok
+    # Probe fails but credentials are stored; verified=False signals the UI.
     data = resp.get_json()
-    assert data["ok"] is False
+    assert resp.status_code == 200
+    assert data["ok"] is True
+    assert data["verified"] is False
 
 
 def test_connect_succeeds_when_modem_root_returns_401(client, monkeypatch):
@@ -270,7 +272,7 @@ def test_connect_http_scheme_stored_in_session(client, monkeypatch):
 
 
 def test_connect_both_schemes_fail(client, monkeypatch):
-    """If both HTTP and HTTPS probes fail, a 502 with a clear error is returned."""
+    """When all probes fail, credentials are stored and verified=False is returned."""
     class _FakeSession:
         verify = True
         auth = None
@@ -289,12 +291,13 @@ def test_connect_both_schemes_fail(client, monkeypatch):
         json={"gateway": "192.168.0.1", "username": "admin", "password": "pass"},
     )
     data = resp.get_json()
-    assert data["ok"] is False
-    assert resp.status_code == 502
+    assert resp.status_code == 200
+    assert data["ok"] is True
+    assert data["verified"] is False
 
 
-def test_connect_both_schemes_timeout_returns_504(client, monkeypatch):
-    """If both HTTP and HTTPS probes time out, a 504 is returned."""
+def test_connect_both_schemes_timeout(client, monkeypatch):
+    """When all probes time out, credentials are stored and verified=False is returned."""
     class _FakeSession:
         verify = True
         auth = None
@@ -313,8 +316,9 @@ def test_connect_both_schemes_timeout_returns_504(client, monkeypatch):
         json={"gateway": "192.168.0.1", "username": "admin", "password": "pass"},
     )
     data = resp.get_json()
-    assert data["ok"] is False
-    assert resp.status_code == 504
+    assert resp.status_code == 200
+    assert data["ok"] is True
+    assert data["verified"] is False
 
 
 def test_connect_succeeds_on_alt_port(client, monkeypatch):

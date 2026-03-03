@@ -357,9 +357,14 @@ def api_connect():
 
     # Probe the modem across common (scheme, port) combinations used by consumer
     # routers.  Any HTTP response (including 401/403) confirms reachability.
+    # The probe is best-effort: when speedRouter runs on a cloud host it cannot
+    # reach a private LAN modem (192.168.x.x), so all probes will fail.  In
+    # that case we still store the credentials with sensible defaults so the
+    # user can open the UI — modem operations will report an error if the host
+    # truly cannot reach the device.
     scheme = "http"
     port = 80
-    last_exc: requests.RequestException | None = None
+    verified = False
     for try_scheme, try_port in _PROBE_SEQUENCE:
         try:
             s = _modem_session(gateway, username, password, login_path=login_path,
@@ -369,21 +374,17 @@ def api_connect():
             _ = s.get(probe_url, timeout=3)
             scheme = try_scheme
             port = try_port
+            verified = True
             break  # modem reachable on this scheme/port
-        except requests.RequestException as exc:
-            last_exc = exc
-    else:
-        # All probes failed
-        if isinstance(last_exc, requests.Timeout):
-            return jsonify({"ok": False, "error": "Modem timed out."}), 504
-        return jsonify({"ok": False, "error": "Cannot reach modem. Check the IP address."}), 502
+        except requests.RequestException:
+            continue
 
     session["gateway"] = gateway
     session["username"] = username
     session["password"] = password
     session["scheme"] = scheme
     session["port"] = port
-    return jsonify({"ok": True, "gateway": gateway})
+    return jsonify({"ok": True, "gateway": gateway, "verified": verified})
 
 
 @app.route("/api/optimize", methods=["POST"])
@@ -867,8 +868,8 @@ def api_dsl_status():
                         continue  # not JSON – try the next path
             except requests.RequestException:
                 continue
-    except Exception as exc:  # noqa: BLE001
-        return jsonify({"ok": False, "error": str(exc)}), 500
+    except Exception:  # noqa: BLE001
+        return jsonify({"ok": False, "error": "Unexpected error reading DSL status."}), 500
 
     return jsonify({
         "ok": False,
@@ -922,8 +923,8 @@ def api_dsl_retrain():
                     })
             except requests.RequestException:
                 continue
-    except Exception as exc:  # noqa: BLE001
-        return jsonify({"ok": False, "error": str(exc)}), 500
+    except Exception:  # noqa: BLE001
+        return jsonify({"ok": False, "error": "Unexpected error sending retrain command."}), 500
 
     return jsonify({
         "ok": False,

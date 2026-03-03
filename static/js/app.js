@@ -90,10 +90,16 @@ function loadPrefs() {
 
 let connected = false;
 
-function setConnected(gateway) {
+function setConnected(gateway, verified = true) {
   connected = true;
-  document.getElementById("conn-badge").className = "badge bg-success";
-  document.getElementById("conn-badge").textContent = `Connected: ${gateway}`;
+  const badge = document.getElementById("conn-badge");
+  if (verified) {
+    badge.className = "badge bg-success";
+    badge.textContent = `Connected: ${gateway}`;
+  } else {
+    badge.className = "badge bg-warning text-dark";
+    badge.textContent = `⚠️ Saved: ${gateway}`;
+  }
   document.getElementById("btn-disconnect").classList.remove("d-none");
 }
 
@@ -127,9 +133,16 @@ document.getElementById("connect-form").addEventListener("submit", async (e) => 
     const data = await postJSON("/api/connect", { gateway, username, password });
     if (data.ok) {
       savePrefs(gateway, username);
-      setConnected(data.gateway);
-      showAlert("connect-alert", `✅ Connected to <strong>${data.gateway}</strong>`, "success");
+      setConnected(data.gateway, data.verified === true);
       document.getElementById("f-password").value = "";
+      if (data.verified === true) {
+        showAlert("connect-alert", `✅ Connected to <strong>${data.gateway}</strong>`, "success");
+      } else {
+        showAlert("connect-alert",
+          `⚠️ Credentials saved for <strong>${data.gateway}</strong>, but the modem was not reachable from this server. ` +
+          `For full modem management, run speedRouter locally on your home network.`,
+          "warning");
+      }
     } else {
       showAlert("connect-alert", `❌ ${data.error}`);
     }
