@@ -371,7 +371,7 @@ def api_connect():
                                user_field=user_field, pass_field=pass_field,
                                scheme=try_scheme, port=try_port)
             probe_url = _gateway_base_url(try_scheme, gateway, try_port) + "/"
-            _ = s.get(probe_url, timeout=3)
+            _ = s.get(probe_url, timeout=2)
             scheme = try_scheme
             port = try_port
             verified = True
