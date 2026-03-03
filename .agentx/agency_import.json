@@ -1,1 +1,171 @@
-[]
+[
+  {
+    "id": "speedrouter-ecosystem-coordinator",
+    "role": "speedRouter Ecosystem Coordinator",
+    "description": "Coordinates the full speedRouter agent ecosystem \u2014 routing tasks to the right specialist agent (network, VPN, speed, security, implementation) and providing an overview of available tools and capabilities.",
+    "tags": [
+      "agents"
+    ],
+    "capabilities": [],
+    "required_tools": [
+      "apply_patch",
+      "create_file",
+      "github_repo",
+      "list_dir",
+      "read_file",
+      "runSubagent"
+    ],
+    "preferred_profile": "power",
+    "risk_level": "medium"
+  },
+  {
+    "id": "speedrouter-implementation-pilot",
+    "role": "speedRouter Implementation Pilot",
+    "description": "Executes scoped code changes to the speedRouter Flask app. Applies patches, creates files, runs validation tests, and maintains release hygiene.",
+    "tags": [
+      "agents",
+      "code changes",
+      "refactoring",
+      "test validation"
+    ],
+    "capabilities": [
+      "code-changes",
+      "refactoring",
+      "test-validation"
+    ],
+    "required_tools": [
+      "apply_patch",
+      "create_file",
+      "list_dir",
+      "read_file",
+      "run_in_terminal"
+    ],
+    "preferred_profile": "balanced",
+    "risk_level": "medium"
+  },
+  {
+    "id": "speedrouter-network-engineer",
+    "role": "speedRouter Network Engineer",
+    "description": "Manages modem/gateway connectivity features \u2014 gateway authentication, DNS optimization, MTU tuning, firewall rules, UPnP, WPS, and TR-069 settings.",
+    "tags": [
+      "agents",
+      "dns config",
+      "firewall config",
+      "modem login"
+    ],
+    "capabilities": [
+      "modem-login",
+      "dns-config",
+      "firewall-config",
+      "isp-proofing"
+    ],
+    "required_tools": [
+      "apply_patch",
+      "create_file",
+      "list_dir",
+      "read_file",
+      "run_in_terminal"
+    ],
+    "preferred_profile": "balanced",
+    "risk_level": "medium"
+  },
+  {
+    "id": "speedrouter-orchestrator",
+    "role": "speedRouter Orchestrator",
+    "description": "Plans and coordinates multi-step tasks across speedRouter specialist agents. Breaks down complex requests, orders dependencies, and tracks delivery status.",
+    "tags": [
+      "agents",
+      "delivery status",
+      "handoffs",
+      "task routing"
+    ],
+    "capabilities": [
+      "task-routing",
+      "handoffs",
+      "delivery-status"
+    ],
+    "required_tools": [
+      "apply_patch",
+      "create_file",
+      "list_dir",
+      "read_file",
+      "runSubagent"
+    ],
+    "preferred_profile": "power",
+    "risk_level": "medium"
+  },
+  {
+    "id": "speedrouter-security-auditor",
+    "role": "speedRouter Security Auditor",
+    "description": "Audits the speedRouter codebase for security vulnerabilities \u2014 input validation, session handling, IP sanitization, and dependency hygiene.",
+    "tags": [
+      "agents",
+      "dependency scan",
+      "input validation",
+      "session review"
+    ],
+    "capabilities": [
+      "input-validation",
+      "session-review",
+      "dependency-scan"
+    ],
+    "required_tools": [
+      "grep_search",
+      "list_dir",
+      "read_file",
+      "semantic_search"
+    ],
+    "preferred_profile": "safe",
+    "risk_level": "low"
+  },
+  {
+    "id": "speedrouter-speed-analyst",
+    "role": "speedRouter Speed Analyst",
+    "description": "Runs and interprets internet speed tests. Benchmarks download, upload, and ping. Surfaces performance recommendations based on test results and ISP tier.",
+    "tags": [
+      "agents",
+      "benchmark reporting",
+      "server selection",
+      "speed test"
+    ],
+    "capabilities": [
+      "speed-test",
+      "benchmark-reporting",
+      "server-selection"
+    ],
+    "required_tools": [
+      "apply_patch",
+      "create_file",
+      "list_dir",
+      "read_file",
+      "run_in_terminal"
+    ],
+    "preferred_profile": "balanced",
+    "risk_level": "medium"
+  },
+  {
+    "id": "speedrouter-vpn-specialist",
+    "role": "speedRouter VPN Specialist",
+    "description": "Handles WireGuard VPN configuration push to the modem or router. Validates endpoints, public/private key pairs, and CIDR parameters before applying.",
+    "tags": [
+      "agents",
+      "endpoint management",
+      "key validation",
+      "vpn config"
+    ],
+    "capabilities": [
+      "vpn-config",
+      "key-validation",
+      "endpoint-management"
+    ],
+    "required_tools": [
+      "apply_patch",
+      "create_file",
+      "list_dir",
+      "read_file",
+      "run_in_terminal"
+    ],
+    "preferred_profile": "balanced",
+    "risk_level": "medium"
+  }
+]
