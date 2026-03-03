@@ -468,7 +468,144 @@ def test_disconnect(client):
         assert "gateway" not in sess
 
 
-# ── /api/robocall/* ───────────────────────────────────────────────────────────
+# ── /api/dsl/* ────────────────────────────────────────────────────────────────
+
+def test_dsl_status_requires_connection(client):
+    """Without a session, /api/dsl/status returns 401."""
+    resp = client.get("/api/dsl/status")
+    assert resp.status_code == 401
+    data = resp.get_json()
+    assert data["ok"] is False
+
+
+def test_dsl_retrain_requires_connection(client):
+    """Without a session, /api/dsl/retrain returns 401."""
+    resp = client.post("/api/dsl/retrain", json={})
+    assert resp.status_code == 401
+    data = resp.get_json()
+    assert data["ok"] is False
+
+
+def test_dsl_status_returns_modem_json(client, monkeypatch):
+    """When the modem DSL endpoint returns JSON, /api/dsl/status wraps it in ok=True."""
+    modem_payload = {"dsl": {"line0": {"downstream": {"rate": 33000}, "status": "SHOWTIME"}}}
+
+    class _FakeSession:
+        verify = True
+        auth = None
+        def post(self, *a, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def raise_for_status(self): pass
+            return R()
+        def get(self, url, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def json(self_inner):
+                    return modem_payload
+            return R()
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+    with client.session_transaction() as sess:
+        sess["gateway"] = "192.168.0.1"
+        sess["username"] = "admin"
+        sess["password"] = "pass"
+
+    resp = client.get("/api/dsl/status")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["data"] == modem_payload
+
+
+def test_dsl_status_modem_unavailable(client, monkeypatch):
+    """When all DSL status paths fail, /api/dsl/status returns 502."""
+    import requests as req_module
+
+    class _FakeSession:
+        verify = True
+        auth = None
+        def post(self, *a, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def raise_for_status(self): pass
+            return R()
+        def get(self, url, **kw):
+            raise req_module.ConnectionError("not available")
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+    with client.session_transaction() as sess:
+        sess["gateway"] = "192.168.0.1"
+        sess["username"] = "admin"
+        sess["password"] = "pass"
+
+    resp = client.get("/api/dsl/status")
+    assert resp.status_code == 502
+    data = resp.get_json()
+    assert data["ok"] is False
+
+
+def test_dsl_retrain_success(client, monkeypatch):
+    """When the modem retrain endpoint accepts the request, /api/dsl/retrain returns ok=True."""
+    class _FakeSession:
+        verify = True
+        auth = None
+        def post(self, *a, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def raise_for_status(self): pass
+            return R()
+        def request(self, method, url, **kw):
+            class R:
+                ok = True
+                status_code = 200
+            return R()
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+    with client.session_transaction() as sess:
+        sess["gateway"] = "192.168.0.1"
+        sess["username"] = "admin"
+        sess["password"] = "pass"
+
+    resp = client.post("/api/dsl/retrain", json={})
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert "retrain" in data["message"].lower()
+
+
+def test_dsl_retrain_unavailable(client, monkeypatch):
+    """When all retrain endpoints fail, /api/dsl/retrain returns 502."""
+    import requests as req_module
+
+    class _FakeSession:
+        verify = True
+        auth = None
+        def post(self, *a, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def raise_for_status(self): pass
+            return R()
+        def request(self, method, url, **kw):
+            raise req_module.ConnectionError("not available")
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+    with client.session_transaction() as sess:
+        sess["gateway"] = "192.168.0.1"
+        sess["username"] = "admin"
+        sess["password"] = "pass"
+
+    resp = client.post("/api/dsl/retrain", json={})
+    assert resp.status_code == 502
+    data = resp.get_json()
+    assert data["ok"] is False
+
+
 
 @pytest.fixture
 def isolated_blocklist(tmp_path, monkeypatch):
