@@ -8,6 +8,24 @@ A UI that can log into your modem and fix the settings for best connection and s
 - 🔒 **One-click optimiser** — DNS, firewall, MTU, UPnP, WPS, TR-069/CWMP
 - 📶 **Speed test** — real download/upload/ping via Speedtest.net
 - 🔐 **WireGuard VPN** — push a VPN config directly to your modem
+- 🌐 **Auto-detect gateway** — automatically fills in your router's IP on page load
+- 📦 **Offline-ready UI** — Bootstrap CSS/JS bundled locally; no internet required to load the UI
+
+---
+
+## Local use (recommended)
+
+> **Note:** The modem connect, optimise, and VPN features require the app to run on
+> the **same LAN as your modem**. Run it locally on your laptop or a device on your
+> home network; don't rely on a cloud-hosted instance for these features.
+
+### Auto-detect gateway
+
+When the Connect tab loads, speedRouter calls `GET /api/network/gateway` to detect
+your default gateway IP automatically (works on Windows, macOS, and Linux) and
+pre-fills the Gateway IP field. If detection fails the field stays empty for manual
+entry. The last-used gateway and username are also saved in `localStorage` and
+restored on the next visit (password is never stored).
 
 ---
 
@@ -66,6 +84,28 @@ Stop it:
 
 ```bash
 docker compose down
+```
+
+---
+
+## CenturyLink C4000BZ support
+
+speedRouter includes a built-in preset for the **CenturyLink C4000BZ** modem/router.
+To use it, send `"preset": "centurylink_c4000bz"` in your connect request, or select
+it from the router preset dropdown in the UI (if shown).
+
+You can also override the login endpoint and field names with environment variables:
+
+| Variable            | Default        | Description                         |
+|---------------------|----------------|-------------------------------------|
+| `ROUTER_LOGIN_URL`  | `/login.cgi`   | Login path on the router            |
+| `ROUTER_USER_FIELD` | `username`     | Form field name for the username    |
+| `ROUTER_PASS_FIELD` | `password`     | Form field name for the password    |
+
+Example for a router using a non-standard login path:
+
+```bash
+ROUTER_LOGIN_URL=/cgi-bin/login ROUTER_USER_FIELD=user python app.py
 ```
 
 ---
