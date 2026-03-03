@@ -317,6 +317,73 @@ def test_connect_both_schemes_timeout_returns_504(client, monkeypatch):
     assert resp.status_code == 504
 
 
+def test_connect_succeeds_on_alt_port(client, monkeypatch):
+    """When port 80 is closed but port 8080 responds, connection succeeds on port 8080."""
+    class _FakeSession:
+        verify = True
+        auth = None
+        def post(self, *a, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def raise_for_status(self): pass
+            return R()
+        def get(self, url, **kw):
+            if ":8080" not in url:
+                raise req_module.ConnectionError("port closed")
+            class R:
+                status_code = 200
+                ok = True
+            return R()
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+    resp = client.post(
+        "/api/connect",
+        json={"gateway": "192.168.0.1", "username": "admin", "password": "pass"},
+    )
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["gateway"] == "192.168.0.1"
+    with client.session_transaction() as sess:
+        assert sess.get("port") == 8080
+
+
+def test_connect_port_stored_in_session(client, monkeypatch):
+    """When a connection succeeds on port 80, port=80 is stored in the Flask session."""
+    class _FakeSession:
+        def post(self, *a, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def raise_for_status(self): pass
+            return R()
+        def get(self, url, **kw):
+            class R:
+                status_code = 200
+                ok = True
+            return R()
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+    client.post(
+        "/api/connect",
+        json={"gateway": "192.168.1.1", "username": "admin", "password": "pass"},
+    )
+    with client.session_transaction() as sess:
+        assert sess.get("port") == 80
+
+
+def test_gateway_base_url_standard_ports():
+    """_gateway_base_url omits the port for standard HTTP/HTTPS ports."""
+    assert app_module._gateway_base_url("http", "192.168.0.1", 80) == "http://192.168.0.1"
+    assert app_module._gateway_base_url("https", "192.168.0.1", 443) == "https://192.168.0.1"
+
+
+def test_gateway_base_url_alt_ports():
+    """_gateway_base_url includes the port for non-standard ports."""
+    assert app_module._gateway_base_url("http", "192.168.0.1", 8080) == "http://192.168.0.1:8080"
+    assert app_module._gateway_base_url("https", "192.168.0.1", 8443) == "https://192.168.0.1:8443"
+
+
 # ── /api/optimize without session ────────────────────────────────────────────
 
 def test_optimize_requires_connection(client):
