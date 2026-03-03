@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>speedRouter</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
+        crossorigin="anonymous" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body class="bg-dark text-light">
+
+<!-- ── Navbar ─────────────────────────────────────────────────────────────── -->
+<nav class="navbar navbar-dark bg-black px-3 py-2 d-flex justify-content-between align-items-center">
+  <span class="navbar-brand mb-0 h1">⚡ speedRouter</span>
+  <div id="conn-badge" class="badge bg-secondary">Not connected</div>
+</nav>
+
+<!-- ── Tab navigation ────────────────────────────────────────────────────── -->
+<div class="container-lg mt-3">
+  <ul class="nav nav-tabs nav-fill" id="mainTabs" role="tablist">
+    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-connect">🔌 Connect</button></li>
+    <li class="nav-item"><button class="nav-link"        data-bs-toggle="tab" data-bs-target="#tab-optimize">🔒 Optimise</button></li>
+    <li class="nav-item"><button class="nav-link"        data-bs-toggle="tab" data-bs-target="#tab-speed">📶 Speed Test</button></li>
+    <li class="nav-item"><button class="nav-link"        data-bs-toggle="tab" data-bs-target="#tab-vpn">🔐 VPN</button></li>
+  </ul>
+
+  <div class="tab-content mt-3" id="mainTabsContent">
+
+    <!-- ── Connect tab ───────────────────────────────────────────────────── -->
+    <div class="tab-pane fade show active" id="tab-connect">
+      <div class="card bg-dark border-secondary shadow">
+        <div class="card-body">
+          <h5 class="card-title">Modem / Router Login</h5>
+          <p class="text-muted small">Enter the admin panel details for your modem or router.
+            Common gateway addresses: <code>192.168.1.1</code>, <code>192.168.0.1</code>, <code>10.0.0.1</code>.</p>
+
+          <form id="connect-form" novalidate>
+            <div class="mb-3">
+              <label class="form-label">Gateway IP</label>
+              <input id="f-gateway" type="text" class="form-control bg-dark text-light border-secondary"
+                     placeholder="192.168.1.1" required />
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Username</label>
+              <input id="f-username" type="text" class="form-control bg-dark text-light border-secondary"
+                     placeholder="admin" required />
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Password</label>
+              <input id="f-password" type="password" class="form-control bg-dark text-light border-secondary"
+                     placeholder="••••••••" required />
+            </div>
+
+            <div class="d-flex gap-2">
+              <button type="submit" class="btn btn-primary">Connect</button>
+              <button type="button" id="btn-disconnect" class="btn btn-outline-danger d-none">Disconnect</button>
+            </div>
+          </form>
+
+          <div id="connect-alert" class="mt-3"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Optimise tab ──────────────────────────────────────────────────── -->
+    <div class="tab-pane fade" id="tab-optimize">
+      <div class="card bg-dark border-secondary shadow">
+        <div class="card-body">
+          <h5 class="card-title">Security &amp; Performance Optimiser</h5>
+          <p class="text-muted small">Applies the following recommended settings to your modem in one click:</p>
+          <ul class="small text-muted">
+            <li>DNS → <strong>Cloudflare 1.1.1.1</strong> / <strong>Google 8.8.8.8</strong> (faster + private)</li>
+            <li>Disable <strong>TR-069 / CWMP</strong> — stops ISP remote management of your router</li>
+            <li>Enable <strong>Firewall &amp; SPI</strong></li>
+            <li>Disable <strong>UPnP</strong> (common attack vector)</li>
+            <li>Set <strong>MTU to 1500</strong> for optimal throughput</li>
+            <li>Disable <strong>WPS</strong> (PIN brute-force vulnerability)</li>
+          </ul>
+
+          <button id="btn-optimize" class="btn btn-success">Apply Recommended Settings</button>
+
+          <div id="optimize-results" class="mt-3"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Speed test tab ────────────────────────────────────────────────── -->
+    <div class="tab-pane fade" id="tab-speed">
+      <div class="card bg-dark border-secondary shadow">
+        <div class="card-body">
+          <h5 class="card-title">Internet Speed Test</h5>
+          <p class="text-muted small">Tests your real internet speed using the Speedtest.net network.</p>
+
+          <button id="btn-speedtest" class="btn btn-info text-dark">Run Speed Test</button>
+
+          <div id="speedtest-spinner" class="mt-3 d-none text-center">
+            <div class="spinner-border text-info" role="status"></div>
+            <p class="mt-2 text-muted small">Running speed test — this may take 30–60 seconds…</p>
+          </div>
+
+          <div id="speedtest-results" class="mt-3"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── VPN tab ───────────────────────────────────────────────────────── -->
+    <div class="tab-pane fade" id="tab-vpn">
+      <div class="card bg-dark border-secondary shadow">
+        <div class="card-body">
+          <h5 class="card-title">WireGuard VPN Configuration</h5>
+          <p class="text-muted small">Push a WireGuard VPN tunnel configuration directly to your modem.
+            You must be connected to your modem first.</p>
+
+          <form id="vpn-form" novalidate>
+            <div class="mb-3">
+              <label class="form-label">VPN Server Endpoint <span class="text-muted">(IP:port)</span></label>
+              <input id="v-endpoint" type="text" class="form-control bg-dark text-light border-secondary"
+                     placeholder="vpn.example.com:51820" required />
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Server Public Key</label>
+              <input id="v-pubkey" type="text" class="form-control bg-dark text-light border-secondary font-monospace"
+                     placeholder="base64 public key" required />
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Client Private Key</label>
+              <input id="v-privkey" type="password" class="form-control bg-dark text-light border-secondary font-monospace"
+                     placeholder="base64 private key" required />
+              <div class="form-text text-warning">⚠ Stored only in your browser session — never sent to any third party.</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Allowed IPs</label>
+              <input id="v-allowed" type="text" class="form-control bg-dark text-light border-secondary"
+                     value="0.0.0.0/0" />
+              <div class="form-text text-muted"><code>0.0.0.0/0</code> routes all traffic through the VPN.</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">VPN DNS</label>
+              <input id="v-dns" type="text" class="form-control bg-dark text-light border-secondary"
+                     value="1.1.1.1" />
+            </div>
+
+            <button type="submit" class="btn btn-warning text-dark">Push VPN Config to Modem</button>
+          </form>
+
+          <div id="vpn-alert" class="mt-3"></div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /tab-content -->
+</div><!-- /container -->
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc4s9bIOgUxi8T/jzmf9yT4PXIwLxHH5+L9LJbkFNuJ"
+        crossorigin="anonymous"></script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
