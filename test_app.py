@@ -241,6 +241,126 @@ def test_disconnect(client):
         assert "gateway" not in sess
 
 
+# ── /api/robocall/* ───────────────────────────────────────────────────────────
+
+@pytest.fixture
+def isolated_blocklist(tmp_path, monkeypatch):
+    """Redirect blocklist I/O to a temporary file so tests don't touch blocklist.json."""
+    bl_path = tmp_path / "blocklist.json"
+    monkeypatch.setattr(app_module, "_BLOCKLIST_PATH", bl_path)
+    yield bl_path
+
+
+def test_robocall_list_empty(client, isolated_blocklist):
+    resp = client.get("/api/robocall/list")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["entries"] == []
+
+
+def test_robocall_block_adds_entry(client, isolated_blocklist):
+    resp = client.post("/api/robocall/block", json={"cidr": "1.2.3.0/24", "label": "Spam Inc"})
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert len(data["entries"]) == 1
+    assert data["entries"][0]["cidr"] == "1.2.3.0/24"
+    assert data["entries"][0]["label"] == "Spam Inc"
+
+
+def test_robocall_block_bare_ip(client, isolated_blocklist):
+    """A bare IP address should be normalised to a /32 CIDR."""
+    resp = client.post("/api/robocall/block", json={"cidr": "5.6.7.8"})
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["entries"][0]["cidr"] == "5.6.7.8/32"
+
+
+def test_robocall_block_invalid_cidr(client, isolated_blocklist):
+    resp = client.post("/api/robocall/block", json={"cidr": "not-an-ip"})
+    assert resp.status_code == 400
+    assert resp.get_json()["ok"] is False
+
+
+def test_robocall_block_missing_cidr(client, isolated_blocklist):
+    resp = client.post("/api/robocall/block", json={})
+    assert resp.status_code == 400
+    assert resp.get_json()["ok"] is False
+
+
+def test_robocall_block_duplicate(client, isolated_blocklist):
+    """Adding the same CIDR twice returns ok=True without adding a duplicate."""
+    client.post("/api/robocall/block", json={"cidr": "9.9.9.0/24", "label": "First"})
+    resp = client.post("/api/robocall/block", json={"cidr": "9.9.9.0/24", "label": "Second"})
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert len(data["entries"]) == 1
+
+
+def test_robocall_unblock_removes_entry(client, isolated_blocklist):
+    client.post("/api/robocall/block", json={"cidr": "10.0.0.0/8"})
+    resp = client.post("/api/robocall/unblock", json={"cidr": "10.0.0.0/8"})
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["removed"] == 1
+    assert data["entries"] == []
+
+
+def test_robocall_unblock_nonexistent(client, isolated_blocklist):
+    """Removing a CIDR not in the list returns ok=True with removed=0."""
+    resp = client.post("/api/robocall/unblock", json={"cidr": "99.99.99.0/24"})
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["removed"] == 0
+
+
+def test_robocall_push_requires_connection(client, isolated_blocklist):
+    resp = client.post("/api/robocall/push", json={})
+    assert resp.status_code == 401
+    assert resp.get_json()["ok"] is False
+
+
+def test_robocall_push_empty_blocklist(client, isolated_blocklist):
+    """Push with an empty blocklist returns ok=True with an informative message."""
+    with client.session_transaction() as sess:
+        sess["gateway"] = "192.0.2.1"
+        sess["username"] = "admin"
+        sess["password"] = "pass"
+
+    resp = client.post("/api/robocall/push", json={})
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert "message" in data
+
+
+def test_robocall_push_with_entries(client, isolated_blocklist, monkeypatch):
+    """Push calls the modem CGI for each blocklist entry and reports results."""
+    client.post("/api/robocall/block", json={"cidr": "1.2.3.0/24", "label": "Spam Inc"})
+
+    class _FakeResp:
+        ok = True
+        status_code = 200
+
+    class _FakeSession:
+        def post(self, *args, **kwargs):
+            return _FakeResp()
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+
+    with client.session_transaction() as sess:
+        sess["gateway"] = "192.168.1.1"
+        sess["username"] = "admin"
+        sess["password"] = "pass"
+
+    resp = client.post("/api/robocall/push", json={})
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert len(data["results"]) == 1
+    assert data["results"][0]["status"] == "pushed"
+
+
 # ── Agent toolkit ─────────────────────────────────────────────────────────────
 
 def test_agent_registry_loads():

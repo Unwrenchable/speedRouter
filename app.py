@@ -6,11 +6,14 @@ Provides: modem login, security/performance optimiser, ISP-proofing,
 
 import argparse
 import ipaddress
+import json
 import os
 import platform
 import re
 import secrets
 import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
 
 import requests
 import speedtest
@@ -26,6 +29,15 @@ app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 def _safe_ip(value: str) -> str:
     """Validate and return a canonical IP address string, raise ValueError otherwise."""
     return str(ipaddress.ip_address(value.strip()))
+
+
+def _safe_network(value: str) -> str:
+    """Validate and return a canonical network CIDR string, raise ValueError otherwise.
+
+    Accepts both a bare IP (normalised to /32 or /128) and CIDR notation.
+    strict=False allows host bits to be set (e.g. 192.168.1.5/24 → 192.168.1.0/24).
+    """
+    return str(ipaddress.ip_network(value.strip(), strict=False))
 
 
 def _detect_gateway() -> str | None:
@@ -57,6 +69,33 @@ def _detect_gateway() -> str | None:
     except Exception:  # noqa: BLE001
         pass
     return None
+
+
+# ── Robocall blocklist ────────────────────────────────────────────────────────
+
+_BLOCKLIST_PATH = Path(
+    os.environ.get(
+        "BLOCKLIST_PATH",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "blocklist.json"),
+    )
+)
+
+
+def _load_blocklist() -> list[dict]:
+    """Load the robocall blocklist from disk; return an empty list if absent/corrupt."""
+    if _BLOCKLIST_PATH.exists():
+        try:
+            data = json.loads(_BLOCKLIST_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+    return []
+
+
+def _save_blocklist(entries: list[dict]) -> None:
+    """Persist the blocklist to disk."""
+    _BLOCKLIST_PATH.write_text(json.dumps(entries, indent=2), encoding="utf-8")
 
 
 # ── Router login strategies ───────────────────────────────────────────────────
@@ -346,6 +385,100 @@ def api_vpn_config():
         return jsonify(
             {"ok": False, "error": f"Could not reach modem VPN endpoint: {exc}"}
         ), 502
+
+
+@app.route("/api/robocall/list")
+def api_robocall_list():
+    """Return the current robocall blocklist."""
+    return jsonify({"ok": True, "entries": _load_blocklist()})
+
+
+@app.route("/api/robocall/block", methods=["POST"])
+def api_robocall_block():
+    """Add an IP address or CIDR block to the robocall blocklist."""
+    data = request.get_json(silent=True) or {}
+    label = data.get("label", "").strip()
+    cidr_raw = data.get("cidr", "").strip()
+
+    if not cidr_raw:
+        return jsonify({"ok": False, "error": "cidr is required."}), 400
+
+    try:
+        cidr = _safe_network(cidr_raw)
+    except ValueError:
+        return jsonify({"ok": False, "error": "Invalid IP address or CIDR."}), 400
+
+    entries = _load_blocklist()
+    if any(e["cidr"] == cidr for e in entries):
+        return jsonify({"ok": True, "message": f"{cidr} is already in the blocklist.", "entries": entries})
+
+    entries.append({
+        "label": label or cidr,
+        "cidr": cidr,
+        "added": datetime.now(tz=timezone.utc).strftime("%Y-%m-%d"),
+    })
+    _save_blocklist(entries)
+    return jsonify({"ok": True, "entries": entries})
+
+
+@app.route("/api/robocall/unblock", methods=["POST"])
+def api_robocall_unblock():
+    """Remove an IP address or CIDR block from the robocall blocklist."""
+    data = request.get_json(silent=True) or {}
+    cidr_raw = data.get("cidr", "").strip()
+
+    if not cidr_raw:
+        return jsonify({"ok": False, "error": "cidr is required."}), 400
+
+    try:
+        cidr = _safe_network(cidr_raw)
+    except ValueError:
+        return jsonify({"ok": False, "error": "Invalid IP address or CIDR."}), 400
+
+    entries = _load_blocklist()
+    before = len(entries)
+    entries = [e for e in entries if e["cidr"] != cidr]
+    _save_blocklist(entries)
+    return jsonify({"ok": True, "removed": before - len(entries), "entries": entries})
+
+
+@app.route("/api/robocall/push", methods=["POST"])
+def api_robocall_push():
+    """Push the full blocklist as firewall rules to the connected modem."""
+    if "gateway" not in session:
+        return jsonify({"ok": False, "error": "Not connected to a modem."}), 401
+
+    gateway = session["gateway"]
+    username = session["username"]
+    password = session["password"]
+
+    entries = _load_blocklist()
+    if not entries:
+        return jsonify({"ok": True, "results": [], "message": "Blocklist is empty — nothing to push."})
+
+    results = []
+    try:
+        s = _modem_session(gateway, username, password)
+        for entry in entries:
+            network = ipaddress.ip_network(entry["cidr"])
+            try:
+                resp = s.post(
+                    f"http://{gateway}/firewall_block.cgi",
+                    data={
+                        "ip_block": str(network.network_address),
+                        "ip_mask": str(network.netmask),
+                        "action": "block",
+                    },
+                    timeout=5,
+                )
+                status = "pushed" if resp.ok else f"skipped (HTTP {resp.status_code})"
+            except requests.RequestException:
+                status = "skipped (endpoint not available on this modem)"
+            results.append({"entry": entry["label"], "cidr": entry["cidr"], "status": status})
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+    return jsonify({"ok": True, "results": results})
 
 
 @app.route("/api/disconnect", methods=["POST"])
