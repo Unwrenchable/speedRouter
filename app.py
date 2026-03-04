@@ -274,7 +274,7 @@ def _modem_session(
         resp = s.post(
             login_url,
             data={user_field: username, pass_field: password},
-            timeout=5,
+            timeout=3,
             allow_redirects=True,
         )
         resp.raise_for_status()
@@ -357,33 +357,34 @@ def api_connect():
 
     # Probe the modem across common (scheme, port) combinations used by consumer
     # routers.  Any HTTP response (including 401/403) confirms reachability.
+    # The probe is best-effort: when speedRouter runs on a cloud host it cannot
+    # reach a private LAN modem (192.168.x.x), so all probes will fail.  In
+    # that case we still store the credentials with sensible defaults so the
+    # user can open the UI — modem operations will report an error if the host
+    # truly cannot reach the device.
     scheme = "http"
     port = 80
-    last_exc: requests.RequestException | None = None
+    verified = False
     for try_scheme, try_port in _PROBE_SEQUENCE:
         try:
             s = _modem_session(gateway, username, password, login_path=login_path,
                                user_field=user_field, pass_field=pass_field,
                                scheme=try_scheme, port=try_port)
             probe_url = _gateway_base_url(try_scheme, gateway, try_port) + "/"
-            _ = s.get(probe_url, timeout=5)
+            _ = s.get(probe_url, timeout=2)
             scheme = try_scheme
             port = try_port
+            verified = True
             break  # modem reachable on this scheme/port
-        except requests.RequestException as exc:
-            last_exc = exc
-    else:
-        # All probes failed
-        if isinstance(last_exc, requests.Timeout):
-            return jsonify({"ok": False, "error": "Modem timed out."}), 504
-        return jsonify({"ok": False, "error": "Cannot reach modem. Check the IP address."}), 502
+        except requests.RequestException:
+            continue
 
     session["gateway"] = gateway
     session["username"] = username
     session["password"] = password
     session["scheme"] = scheme
     session["port"] = port
-    return jsonify({"ok": True, "gateway": gateway})
+    return jsonify({"ok": True, "gateway": gateway, "verified": verified})
 
 
 @app.route("/api/optimize", methods=["POST"])
@@ -826,6 +827,112 @@ def api_vpn_peer_config(peer_id: str):
         "config": _build_peer_wg_config(server, peer),
         "name": peer["name"],
     })
+
+
+@app.route("/api/dsl/status")
+def api_dsl_status():
+    """Fetch DSL line statistics directly from the modem admin API.
+
+    Tries common JSON API paths used by the CenturyLink C4000BZ and generic
+    DSL modems.  Returns the raw JSON payload from the first path that answers
+    with a parseable JSON body, so the frontend can display whatever the modem
+    provides without any model-specific parsing on the server side.
+    """
+    if "gateway" not in session:
+        return jsonify({"ok": False, "error": "Not connected to a modem."}), 401
+
+    gateway = session["gateway"]
+    username = session["username"]
+    password = session["password"]
+    scheme = session.get("scheme", "http")
+    port = session.get("port", 443 if scheme == "https" else 80)
+
+    # Ordered list of DSL status paths to probe (most-specific first).
+    dsl_status_paths = [
+        "/api/v1/modem/dsl",          # Zyxel / CenturyLink C4000BZ REST API
+        "/dsl_status.cgi",            # Generic CGI
+        "/cgi-bin/status_dsl.cgi",    # Alternative generic CGI path
+    ]
+
+    try:
+        s = _modem_session(gateway, username, password, scheme=scheme, port=port)
+        base = _gateway_base_url(scheme, gateway, port)
+        for path in dsl_status_paths:
+            try:
+                resp = s.get(f"{base}{path}", timeout=5)
+                if resp.ok:
+                    try:
+                        data = resp.json()
+                        return jsonify({"ok": True, "data": data})
+                    except ValueError:
+                        continue  # not JSON – try the next path
+            except requests.RequestException:
+                continue
+    except Exception:  # noqa: BLE001
+        return jsonify({"ok": False, "error": "Unexpected error reading DSL status."}), 500
+
+    return jsonify({
+        "ok": False,
+        "error": (
+            "DSL status endpoint not available on this modem. "
+            "Check the modem admin panel directly for DSL line stats."
+        ),
+    }), 502
+
+
+@app.route("/api/dsl/retrain", methods=["POST"])
+def api_dsl_retrain():
+    """Trigger a DSL line retrain on the modem.
+
+    Tries common retrain / restart CGI and REST endpoints.  A retrain drops
+    both DSL lines and lets them re-negotiate sync rates — the modem will be
+    offline for 30–120 seconds.  No ISP involvement is required; this is
+    equivalent to power-cycling the modem but preserves all settings.
+    """
+    if "gateway" not in session:
+        return jsonify({"ok": False, "error": "Not connected to a modem."}), 401
+
+    gateway = session["gateway"]
+    username = session["username"]
+    password = session["password"]
+    scheme = session.get("scheme", "http")
+    port = session.get("port", 443 if scheme == "https" else 80)
+
+    # Ordered list of retrain endpoints to try.
+    retrain_attempts = [
+        # (method, path, payload)
+        ("POST", "/api/v1/modem/restart", {"type": "dsl"}),     # C4000BZ REST API
+        ("POST", "/dsl_retrain.cgi",      {"action": "retrain"}),  # Generic CGI
+        ("POST", "/reboot.cgi",           {"action": "dsl_retrain"}),  # Fallback CGI
+    ]
+
+    try:
+        s = _modem_session(gateway, username, password, scheme=scheme, port=port)
+        base = _gateway_base_url(scheme, gateway, port)
+        for method, path, payload in retrain_attempts:
+            try:
+                resp = s.request(method, f"{base}{path}", json=payload, timeout=5)
+                if resp.ok:
+                    return jsonify({
+                        "ok": True,
+                        "message": (
+                            "DSL retrain initiated. Both lines will drop and re-sync "
+                            "(expect 30–120 s of downtime). Check DSL stats again "
+                            "after the modem reconnects."
+                        ),
+                    })
+            except requests.RequestException:
+                continue
+    except Exception:  # noqa: BLE001
+        return jsonify({"ok": False, "error": "Unexpected error sending retrain command."}), 500
+
+    return jsonify({
+        "ok": False,
+        "error": (
+            "Retrain endpoint not available on this modem. "
+            "You can retrain lines manually by power-cycling the modem."
+        ),
+    }), 502
 
 
 @app.route("/api/disconnect", methods=["POST"])

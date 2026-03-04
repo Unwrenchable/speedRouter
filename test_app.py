@@ -119,9 +119,11 @@ def test_connect_unreachable_modem(client):
         "/api/connect",
         json={"gateway": "192.0.2.1", "username": "admin", "password": "pass"},
     )
-    # Must get an error response (502 or 504), never 200 ok
+    # Probe fails but credentials are stored; verified=False signals the UI.
     data = resp.get_json()
-    assert data["ok"] is False
+    assert resp.status_code == 200
+    assert data["ok"] is True
+    assert data["verified"] is False
 
 
 def test_connect_succeeds_when_modem_root_returns_401(client, monkeypatch):
@@ -270,7 +272,7 @@ def test_connect_http_scheme_stored_in_session(client, monkeypatch):
 
 
 def test_connect_both_schemes_fail(client, monkeypatch):
-    """If both HTTP and HTTPS probes fail, a 502 with a clear error is returned."""
+    """When all probes fail, credentials are stored and verified=False is returned."""
     class _FakeSession:
         verify = True
         auth = None
@@ -289,12 +291,13 @@ def test_connect_both_schemes_fail(client, monkeypatch):
         json={"gateway": "192.168.0.1", "username": "admin", "password": "pass"},
     )
     data = resp.get_json()
-    assert data["ok"] is False
-    assert resp.status_code == 502
+    assert resp.status_code == 200
+    assert data["ok"] is True
+    assert data["verified"] is False
 
 
-def test_connect_both_schemes_timeout_returns_504(client, monkeypatch):
-    """If both HTTP and HTTPS probes time out, a 504 is returned."""
+def test_connect_both_schemes_timeout(client, monkeypatch):
+    """When all probes time out, credentials are stored and verified=False is returned."""
     class _FakeSession:
         verify = True
         auth = None
@@ -313,8 +316,9 @@ def test_connect_both_schemes_timeout_returns_504(client, monkeypatch):
         json={"gateway": "192.168.0.1", "username": "admin", "password": "pass"},
     )
     data = resp.get_json()
-    assert data["ok"] is False
-    assert resp.status_code == 504
+    assert resp.status_code == 200
+    assert data["ok"] is True
+    assert data["verified"] is False
 
 
 def test_connect_succeeds_on_alt_port(client, monkeypatch):
@@ -468,7 +472,144 @@ def test_disconnect(client):
         assert "gateway" not in sess
 
 
-# ── /api/robocall/* ───────────────────────────────────────────────────────────
+# ── /api/dsl/* ────────────────────────────────────────────────────────────────
+
+def test_dsl_status_requires_connection(client):
+    """Without a session, /api/dsl/status returns 401."""
+    resp = client.get("/api/dsl/status")
+    assert resp.status_code == 401
+    data = resp.get_json()
+    assert data["ok"] is False
+
+
+def test_dsl_retrain_requires_connection(client):
+    """Without a session, /api/dsl/retrain returns 401."""
+    resp = client.post("/api/dsl/retrain", json={})
+    assert resp.status_code == 401
+    data = resp.get_json()
+    assert data["ok"] is False
+
+
+def test_dsl_status_returns_modem_json(client, monkeypatch):
+    """When the modem DSL endpoint returns JSON, /api/dsl/status wraps it in ok=True."""
+    modem_payload = {"dsl": {"line0": {"downstream": {"rate": 33000}, "status": "SHOWTIME"}}}
+
+    class _FakeSession:
+        verify = True
+        auth = None
+        def post(self, *a, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def raise_for_status(self): pass
+            return R()
+        def get(self, url, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def json(self_inner):
+                    return modem_payload
+            return R()
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+    with client.session_transaction() as sess:
+        sess["gateway"] = "192.168.0.1"
+        sess["username"] = "admin"
+        sess["password"] = "pass"
+
+    resp = client.get("/api/dsl/status")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["data"] == modem_payload
+
+
+def test_dsl_status_modem_unavailable(client, monkeypatch):
+    """When all DSL status paths fail, /api/dsl/status returns 502."""
+    import requests as req_module
+
+    class _FakeSession:
+        verify = True
+        auth = None
+        def post(self, *a, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def raise_for_status(self): pass
+            return R()
+        def get(self, url, **kw):
+            raise req_module.ConnectionError("not available")
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+    with client.session_transaction() as sess:
+        sess["gateway"] = "192.168.0.1"
+        sess["username"] = "admin"
+        sess["password"] = "pass"
+
+    resp = client.get("/api/dsl/status")
+    assert resp.status_code == 502
+    data = resp.get_json()
+    assert data["ok"] is False
+
+
+def test_dsl_retrain_success(client, monkeypatch):
+    """When the modem retrain endpoint accepts the request, /api/dsl/retrain returns ok=True."""
+    class _FakeSession:
+        verify = True
+        auth = None
+        def post(self, *a, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def raise_for_status(self): pass
+            return R()
+        def request(self, method, url, **kw):
+            class R:
+                ok = True
+                status_code = 200
+            return R()
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+    with client.session_transaction() as sess:
+        sess["gateway"] = "192.168.0.1"
+        sess["username"] = "admin"
+        sess["password"] = "pass"
+
+    resp = client.post("/api/dsl/retrain", json={})
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert "retrain" in data["message"].lower()
+
+
+def test_dsl_retrain_unavailable(client, monkeypatch):
+    """When all retrain endpoints fail, /api/dsl/retrain returns 502."""
+    import requests as req_module
+
+    class _FakeSession:
+        verify = True
+        auth = None
+        def post(self, *a, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def raise_for_status(self): pass
+            return R()
+        def request(self, method, url, **kw):
+            raise req_module.ConnectionError("not available")
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+    with client.session_transaction() as sess:
+        sess["gateway"] = "192.168.0.1"
+        sess["username"] = "admin"
+        sess["password"] = "pass"
+
+    resp = client.post("/api/dsl/retrain", json={})
+    assert resp.status_code == 502
+    data = resp.get_json()
+    assert data["ok"] is False
+
+
 
 @pytest.fixture
 def isolated_blocklist(tmp_path, monkeypatch):

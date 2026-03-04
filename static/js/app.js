@@ -90,10 +90,16 @@ function loadPrefs() {
 
 let connected = false;
 
-function setConnected(gateway) {
+function setConnected(gateway, verified = true) {
   connected = true;
-  document.getElementById("conn-badge").className = "badge bg-success";
-  document.getElementById("conn-badge").textContent = `Connected: ${gateway}`;
+  const badge = document.getElementById("conn-badge");
+  if (verified) {
+    badge.className = "badge bg-success";
+    badge.textContent = `Connected: ${gateway}`;
+  } else {
+    badge.className = "badge bg-warning text-dark";
+    badge.textContent = `⚠️ Saved: ${gateway}`;
+  }
   document.getElementById("btn-disconnect").classList.remove("d-none");
 }
 
@@ -127,9 +133,16 @@ document.getElementById("connect-form").addEventListener("submit", async (e) => 
     const data = await postJSON("/api/connect", { gateway, username, password });
     if (data.ok) {
       savePrefs(gateway, username);
-      setConnected(data.gateway);
-      showAlert("connect-alert", `✅ Connected to <strong>${data.gateway}</strong>`, "success");
+      setConnected(data.gateway, data.verified === true);
       document.getElementById("f-password").value = "";
+      if (data.verified === true) {
+        showAlert("connect-alert", `✅ Connected to <strong>${data.gateway}</strong>`, "success");
+      } else {
+        showAlert("connect-alert",
+          `⚠️ Credentials saved for <strong>${data.gateway}</strong>, but the modem was not reachable from this server. ` +
+          `For full modem management, run speedRouter locally on your home network.`,
+          "warning");
+      }
     } else {
       showAlert("connect-alert", `❌ ${data.error}`);
     }
@@ -381,6 +394,79 @@ document.getElementById("btn-robocall-push").addEventListener("click", async () 
 // Load the robocall list whenever the tab is first shown, and on initial page load
 document.getElementById("tab-robocall-btn").addEventListener("shown.bs.tab", renderRobocallList);
 renderRobocallList();
+
+// ── DSL Diagnostics ───────────────────────────────────────────────────────────
+
+function renderDslData(data) {
+  const el = document.getElementById("dsl-results");
+  if (!data.ok) {
+    el.innerHTML = `<div class="alert alert-danger">❌ ${escapeHtml(data.error)}</div>`;
+    return;
+  }
+  // Pretty-print the raw JSON from the modem so users can see every field.
+  const json = JSON.stringify(data.data, null, 2);
+  el.innerHTML = `
+    <div class="card bg-black border-secondary mt-2">
+      <div class="card-header text-muted small py-1">Raw DSL stats from modem</div>
+      <pre class="p-3 mb-0 text-success small" style="white-space:pre-wrap;word-break:break-all;">${escapeHtml(json)}</pre>
+    </div>`;
+}
+
+document.getElementById("btn-dsl-status").addEventListener("click", async () => {
+  const spinner = document.getElementById("dsl-spinner");
+  const btn = document.getElementById("btn-dsl-status");
+
+  if (!connected) {
+    document.getElementById("dsl-results").innerHTML =
+      `<div class="alert alert-warning">Connect to your modem first (use the 🔌 Connect tab).</div>`;
+    return;
+  }
+
+  spinner.classList.remove("d-none");
+  btn.disabled = true;
+
+  try {
+    const data = await (await fetch("/api/dsl/status")).json();
+    renderDslData(data);
+  } catch {
+    document.getElementById("dsl-results").innerHTML =
+      `<div class="alert alert-danger">❌ Network error.</div>`;
+  } finally {
+    spinner.classList.add("d-none");
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("btn-dsl-retrain").addEventListener("click", async () => {
+  const spinner = document.getElementById("dsl-spinner");
+  const btn = document.getElementById("btn-dsl-retrain");
+  const resultsEl = document.getElementById("dsl-results");
+
+  if (!connected) {
+    resultsEl.innerHTML =
+      `<div class="alert alert-warning">Connect to your modem first (use the 🔌 Connect tab).</div>`;
+    return;
+  }
+
+  spinner.classList.remove("d-none");
+  btn.disabled = true;
+  btn.textContent = "Retraining…";
+
+  try {
+    const data = await postJSON("/api/dsl/retrain", {});
+    if (data.ok) {
+      resultsEl.innerHTML = `<div class="alert alert-success">✅ ${escapeHtml(data.message)}</div>`;
+    } else {
+      resultsEl.innerHTML = `<div class="alert alert-danger">❌ ${escapeHtml(data.error)}</div>`;
+    }
+  } catch {
+    resultsEl.innerHTML = `<div class="alert alert-danger">❌ Network error.</div>`;
+  } finally {
+    spinner.classList.add("d-none");
+    btn.disabled = false;
+    btn.textContent = "Retrain Lines";
+  }
+});
 
 // ── VPN Server ────────────────────────────────────────────────────────────────
 
