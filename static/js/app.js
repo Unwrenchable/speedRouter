@@ -187,12 +187,30 @@ document.getElementById("btn-optimize").addEventListener("click", async () => {
   try {
     const data = await postJSON("/api/optimize", {});
     if (data.ok) {
+      const appliedCount = data.results.filter(r => r.status.startsWith("applied")).length;
+      const skippedCount = data.results.filter(r => r.status.includes("skipped")).length;
+
       const rows = data.results.map((r) => {
         const icon = r.status.startsWith("applied") ? "✅" : "⚠️";
         return `<div class="result-row"><span>${icon}</span><span><strong>${r.setting}</strong> — ${r.status}</span></div>`;
       }).join("");
-      document.getElementById("optimize-results").innerHTML =
-        `<div class="card bg-dark border-secondary p-3 mt-2">${rows}</div>`;
+
+      let resultHTML = `<div class="card bg-dark border-secondary p-3 mt-2">${rows}</div>`;
+
+      // Add speed test reminder if any settings were applied
+      if (appliedCount > 0) {
+        resultHTML += `<div class="alert alert-success mt-2 py-2 small">
+          ✅ ${appliedCount} setting(s) applied successfully!
+          <strong>Recommendation:</strong> Run a speed test (📶 tab) to verify the impact on your connection speed.
+        </div>`;
+      } else if (skippedCount === data.results.length) {
+        resultHTML += `<div class="alert alert-warning mt-2 py-2 small">
+          ⚠️ All settings were skipped. This modem may not support these configuration endpoints,
+          or the settings may already be applied through a different interface.
+        </div>`;
+      }
+
+      document.getElementById("optimize-results").innerHTML = resultHTML;
     } else {
       document.getElementById("optimize-results").innerHTML =
         `<div class="alert alert-danger">❌ ${data.error}</div>`;
