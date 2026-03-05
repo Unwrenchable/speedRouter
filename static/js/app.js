@@ -70,10 +70,17 @@ function loadPrefs() {
     const statusData = await statusResp.json();
     if (statusData.connected) {
       setConnected(statusData.gateway);
+      // Repopulate form fields from saved session
+      if (statusData.gateway && !gwField.value) {
+        gwField.value = statusData.gateway;
+      }
+      if (statusData.username && !userField.value) {
+        userField.value = statusData.username;
+      }
     }
   } catch { /* offline or server unavailable – silently skip */ }
 
-  // Auto-detect gateway only if field is still empty
+  // Auto-detect gateway only if field is still empty AND not connected
   if (!gwField.value) {
     try {
       const resp = await fetch("/api/network/gateway");
@@ -391,11 +398,19 @@ document.getElementById("btn-robocall-push").addEventListener("click", async () 
   }
 });
 
-// Load the robocall list whenever the tab is first shown, and on initial page load
+// Load the robocall list whenever the tab is first shown
 document.getElementById("tab-robocall-btn").addEventListener("shown.bs.tab", renderRobocallList);
-renderRobocallList();
 
-// ── DSL Diagnostics ───────────────────────────────────────────────────────────
+// Load VPN server status when the tab is shown, or immediately if it's active
+document.getElementById("tab-vpnsvr-btn").addEventListener("shown.bs.tab", loadVpnServerStatus);
+
+// Check if tabs are already active on page load and initialize them
+if (document.getElementById("tab-robocall").classList.contains("active")) {
+  renderRobocallList();
+}
+if (document.getElementById("tab-vpnsvr").classList.contains("active")) {
+  loadVpnServerStatus();
+}
 
 function renderDslData(data) {
   const el = document.getElementById("dsl-results");
@@ -415,13 +430,15 @@ function renderDslData(data) {
 document.getElementById("btn-dsl-status").addEventListener("click", async () => {
   const spinner = document.getElementById("dsl-spinner");
   const btn = document.getElementById("btn-dsl-status");
+  const resultsEl = document.getElementById("dsl-results");
 
   if (!connected) {
-    document.getElementById("dsl-results").innerHTML =
+    resultsEl.innerHTML =
       `<div class="alert alert-warning">Connect to your modem first (use the 🔌 Connect tab).</div>`;
     return;
   }
 
+  resultsEl.innerHTML = "";  // Clear previous results
   spinner.classList.remove("d-none");
   btn.disabled = true;
 
@@ -429,7 +446,7 @@ document.getElementById("btn-dsl-status").addEventListener("click", async () => 
     const data = await (await fetch("/api/dsl/status")).json();
     renderDslData(data);
   } catch {
-    document.getElementById("dsl-results").innerHTML =
+    resultsEl.innerHTML =
       `<div class="alert alert-danger">❌ Network error.</div>`;
   } finally {
     spinner.classList.add("d-none");
@@ -448,6 +465,7 @@ document.getElementById("btn-dsl-retrain").addEventListener("click", async () =>
     return;
   }
 
+  resultsEl.innerHTML = "";  // Clear previous results
   spinner.classList.remove("d-none");
   btn.disabled = true;
   btn.textContent = "Retraining…";
@@ -540,14 +558,31 @@ async function renderVpnPeerList() {
 document.getElementById("vpnsvr-init-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   clearEl("vpnsvr-alert");
+
+  const subnet = document.getElementById("vs-subnet").value.trim();
+  const port = parseInt(document.getElementById("vs-port").value, 10);
+
+  // Frontend validation
+  if (port < 1 || port > 65535) {
+    showAlert("vpnsvr-alert", "Port must be between 1 and 65535.");
+    return;
+  }
+
+  // Basic CIDR validation
+  const cidrPattern = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
+  if (!cidrPattern.test(subnet)) {
+    showAlert("vpnsvr-alert", "Subnet must be in CIDR format (e.g., 10.8.0.0/24).");
+    return;
+  }
+
   const btn = e.submitter;
   btn.disabled = true;
   btn.textContent = "Generating…";
   try {
     const data = await postJSON("/api/vpn/server/init", {
       endpoint: document.getElementById("vs-endpoint").value.trim(),
-      port: parseInt(document.getElementById("vs-port").value, 10),
-      subnet: document.getElementById("vs-subnet").value.trim(),
+      port: port,
+      subnet: subnet,
       dns: document.getElementById("vs-dns").value.trim(),
     });
     if (data.ok) {
@@ -589,10 +624,14 @@ document.getElementById("btn-vpnsvr-apply").addEventListener("click", async () =
 // Copy server config button
 document.getElementById("btn-vpnsvr-copy-config").addEventListener("click", () => {
   const text = document.getElementById("vpnsvr-config-text").textContent;
-  navigator.clipboard.writeText(text).then(
-    () => showAlert("vpnsvr-alert", "✅ Server config copied to clipboard.", "success"),
-    () => showAlert("vpnsvr-alert", "❌ Could not access clipboard.", "warning"),
-  );
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(
+      () => showAlert("vpnsvr-alert", "✅ Server config copied to clipboard.", "success"),
+      () => showAlert("vpnsvr-alert", "❌ Could not access clipboard.", "warning"),
+    );
+  } else {
+    showAlert("vpnsvr-alert", "❌ Clipboard API not available. Use HTTPS or copy manually.", "warning");
+  }
 });
 
 // Add peer form
@@ -664,5 +703,4 @@ document.getElementById("vpnsvr-peer-list").addEventListener("click", async (e) 
   }
 });
 
-// Load VPN server status when the tab is shown
-document.getElementById("tab-vpnsvr-btn").addEventListener("shown.bs.tab", loadVpnServerStatus);
+// ── DSL Diagnostics ───────────────────────────────────────────────────────────

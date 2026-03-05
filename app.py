@@ -324,7 +324,12 @@ def api_network_gateway():
 def api_status():
     """Return current modem connection state so the UI can restore itself after a page reload."""
     if "gateway" in session:
-        return jsonify({"ok": True, "connected": True, "gateway": session["gateway"]})
+        return jsonify({
+            "ok": True,
+            "connected": True,
+            "gateway": session["gateway"],
+            "username": session.get("username", "")
+        })
     return jsonify({"ok": True, "connected": False})
 
 
@@ -401,7 +406,7 @@ def api_optimize():
       - Disable WPS (Wi-Fi Protected Setup)
     """
     if "gateway" not in session:
-        return jsonify({"ok": False, "error": "Not connected to a modem."}), 401
+        return jsonify({"ok": False, "error": "Not connected to a modem."}), 403
 
     gateway = session["gateway"]
     username = session["username"]
@@ -499,7 +504,7 @@ def api_vpn_config():
       dns          – VPN DNS server (default: 1.1.1.1)
     """
     if "gateway" not in session:
-        return jsonify({"ok": False, "error": "Not connected to a modem."}), 401
+        return jsonify({"ok": False, "error": "Not connected to a modem."}), 403
 
     gateway = session["gateway"]
     username = session["username"]
@@ -603,7 +608,7 @@ def api_robocall_unblock():
 def api_robocall_push():
     """Push the full blocklist as firewall rules to the connected modem."""
     if "gateway" not in session:
-        return jsonify({"ok": False, "error": "Not connected to a modem."}), 401
+        return jsonify({"ok": False, "error": "Not connected to a modem."}), 403
 
     gateway = session["gateway"]
     username = session["username"]
@@ -839,7 +844,7 @@ def api_dsl_status():
     provides without any model-specific parsing on the server side.
     """
     if "gateway" not in session:
-        return jsonify({"ok": False, "error": "Not connected to a modem."}), 401
+        return jsonify({"ok": False, "error": "Not connected to a modem."}), 403
 
     gateway = session["gateway"]
     username = session["username"]
@@ -890,7 +895,7 @@ def api_dsl_retrain():
     equivalent to power-cycling the modem but preserves all settings.
     """
     if "gateway" not in session:
-        return jsonify({"ok": False, "error": "Not connected to a modem."}), 401
+        return jsonify({"ok": False, "error": "Not connected to a modem."}), 403
 
     gateway = session["gateway"]
     username = session["username"]

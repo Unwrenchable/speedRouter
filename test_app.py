@@ -392,7 +392,7 @@ def test_gateway_base_url_alt_ports():
 
 def test_optimize_requires_connection(client):
     resp = client.post("/api/optimize", json={})
-    assert resp.status_code == 401
+    assert resp.status_code == 403
     data = resp.get_json()
     assert data["ok"] is False
 
@@ -439,7 +439,7 @@ def test_vpn_requires_connection(client):
         "public_key": "abc",
         "private_key": "xyz",
     })
-    assert resp.status_code == 401
+    assert resp.status_code == 403
     data = resp.get_json()
     assert data["ok"] is False
 
@@ -475,17 +475,17 @@ def test_disconnect(client):
 # ── /api/dsl/* ────────────────────────────────────────────────────────────────
 
 def test_dsl_status_requires_connection(client):
-    """Without a session, /api/dsl/status returns 401."""
+    """Without a session, /api/dsl/status returns 403."""
     resp = client.get("/api/dsl/status")
-    assert resp.status_code == 401
+    assert resp.status_code == 403
     data = resp.get_json()
     assert data["ok"] is False
 
 
 def test_dsl_retrain_requires_connection(client):
-    """Without a session, /api/dsl/retrain returns 401."""
+    """Without a session, /api/dsl/retrain returns 403."""
     resp = client.post("/api/dsl/retrain", json={})
-    assert resp.status_code == 401
+    assert resp.status_code == 403
     data = resp.get_json()
     assert data["ok"] is False
 
@@ -686,7 +686,7 @@ def test_robocall_unblock_nonexistent(client, isolated_blocklist):
 
 def test_robocall_push_requires_connection(client, isolated_blocklist):
     resp = client.post("/api/robocall/push", json={})
-    assert resp.status_code == 401
+    assert resp.status_code == 403
     assert resp.get_json()["ok"] is False
 
 
