@@ -4,6 +4,11 @@ body {
   min-height: 100vh;
 }
 
+/* Improved text readability on dark backgrounds */
+.text-light-muted {
+  color: #adb5bd !important;
+}
+
 /* Tab bar */
 .nav-tabs .nav-link {
   color: #adb5bd;

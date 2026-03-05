@@ -71,8 +71,8 @@
       <div class="card bg-dark border-secondary shadow">
         <div class="card-body">
           <h5 class="card-title">Security &amp; Performance Optimiser</h5>
-          <p class="text-muted small">Applies the following recommended settings to your modem in one click:</p>
-          <ul class="small text-muted">
+          <p class="text-light-muted small">Applies the following recommended settings to your modem in one click:</p>
+          <ul class="small text-light-muted">
             <li>DNS → <strong>Cloudflare 1.1.1.1</strong> / <strong>Google 8.8.8.8</strong> (faster + private)</li>
             <li>Disable <strong>TR-069 / CWMP</strong> — stops ISP remote management of your router</li>
             <li>Enable <strong>Firewall &amp; SPI</strong></li>
@@ -80,6 +80,10 @@
             <li>Set <strong>MTU to 1500</strong> for optimal throughput</li>
             <li>Disable <strong>WPS</strong> (PIN brute-force vulnerability)</li>
           </ul>
+
+          <div class="alert alert-info py-2 small">
+            💡 <strong>Tip:</strong> Run a speed test (📶 tab) before and after applying these settings to measure the impact on your connection.
+          </div>
 
           <button id="btn-optimize" class="btn btn-success">Apply Recommended Settings</button>
 
