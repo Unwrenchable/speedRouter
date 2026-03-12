@@ -12,7 +12,10 @@
 <!-- ── Navbar ─────────────────────────────────────────────────────────────── -->
 <nav class="navbar navbar-dark bg-black px-3 py-2 d-flex justify-content-between align-items-center">
   <span class="navbar-brand mb-0 h1">⚡ speedRouter</span>
-  <div id="conn-badge" class="badge bg-secondary">Not connected</div>
+  <div class="d-flex align-items-center gap-2">
+    <div id="internet-badge" class="badge bg-secondary" title="Internet connectivity status">🌐 Checking…</div>
+    <div id="conn-badge" class="badge bg-secondary">Not connected</div>
+  </div>
 </nav>
 
 <!-- ── Tab navigation ────────────────────────────────────────────────────── -->
@@ -35,6 +38,7 @@
         <div class="card-body">
           <h5 class="card-title">Modem / Router Login</h5>
           <p class="text-muted small">Enter the admin panel details for your modem or router.
+            Works with ISP-provided modems (CenturyLink, Arris, Motorola) and custom routers (Netgear, ASUS, TP-Link).
             Common gateway addresses: <code>192.168.1.1</code>, <code>192.168.0.1</code>, <code>10.0.0.1</code>.</p>
 
           <form id="connect-form" novalidate>
@@ -53,6 +57,25 @@
               <label for="f-password" class="form-label">Password</label>
               <input id="f-password" type="password" class="form-control bg-dark text-light border-secondary"
                      placeholder="••••••••" required />
+            </div>
+            <div class="mb-3">
+              <label for="f-preset" class="form-label">Router / Modem type <span class="text-muted">(optional)</span></label>
+              <select id="f-preset" class="form-select bg-dark text-light border-secondary">
+                <option value="auto">Auto-detect (recommended)</option>
+                <optgroup label="ISP Modem / Gateway">
+                  <option value="centurylink_c4000bz">CenturyLink / Lumen C4000BZ</option>
+                  <option value="arris_surfboard">Arris / Surfboard (ISP)</option>
+                  <option value="motorola">Motorola cable modem</option>
+                </optgroup>
+                <optgroup label="Consumer Router">
+                  <option value="netgear">Netgear</option>
+                  <option value="asus">ASUS</option>
+                  <option value="tp_link">TP-Link (OpenWrt / stock)</option>
+                  <option value="generic_form">Generic (form login)</option>
+                  <option value="generic_basic">Generic (HTTP Basic Auth)</option>
+                </optgroup>
+              </select>
+              <div class="form-text text-muted">Speeds up login by using the correct form fields for your device. Works with both ISP-provided modems and custom routers.</div>
             </div>
 
             <div class="d-flex gap-2">
@@ -98,6 +121,10 @@
         <div class="card-body">
           <h5 class="card-title">Internet Speed Test</h5>
           <p class="text-muted small">Tests your real internet speed using the Speedtest.net network.</p>
+
+          <div id="speedtest-offline-warning" class="alert alert-warning py-2 small d-none">
+            ⚠️ <strong>No internet detected.</strong> Make sure your device is connected to the internet before running a speed test.
+          </div>
 
           <button id="btn-speedtest" class="btn btn-info text-dark">Run Speed Test</button>
 

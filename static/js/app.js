@@ -33,11 +33,13 @@ function escapeHtml(str) {
 
 const LS_GATEWAY  = "speedrouter_gateway";
 const LS_USERNAME = "speedrouter_username";
+const LS_PRESET   = "speedrouter_preset";
 
-function savePrefs(gateway, username) {
+function savePrefs(gateway, username, preset) {
   try {
     localStorage.setItem(LS_GATEWAY,  gateway);
     localStorage.setItem(LS_USERNAME, username);
+    if (preset) localStorage.setItem(LS_PRESET, preset);
   } catch { /* ignore storage errors */ }
 }
 
@@ -46,9 +48,10 @@ function loadPrefs() {
     return {
       gateway:  localStorage.getItem(LS_GATEWAY)  || "",
       username: localStorage.getItem(LS_USERNAME) || "",
+      preset:   localStorage.getItem(LS_PRESET)   || "",
     };
   } catch {
-    return { gateway: "", username: "" };
+    return { gateway: "", username: "", preset: "" };
   }
 }
 
@@ -57,12 +60,14 @@ function loadPrefs() {
 (async function initForm() {
   const gwField       = document.getElementById("f-gateway");
   const userField     = document.getElementById("f-username");
+  const presetField   = document.getElementById("f-preset");
   const gwHint        = document.getElementById("f-gateway-hint");
   const prefs         = loadPrefs();
 
   // Pre-fill saved values first
   if (prefs.gateway)  gwField.value   = prefs.gateway;
   if (prefs.username) userField.value = prefs.username;
+  if (prefs.preset && presetField)   presetField.value = prefs.preset;
 
   // Restore connected state from server session (survives page reload)
   try {
@@ -76,6 +81,9 @@ function loadPrefs() {
       }
       if (statusData.username && !userField.value) {
         userField.value = statusData.username;
+      }
+      if (statusData.preset && presetField && !prefs.preset) {
+        presetField.value = statusData.preset;
       }
     }
   } catch { /* offline or server unavailable – silently skip */ }
@@ -91,6 +99,9 @@ function loadPrefs() {
       }
     } catch { /* network unavailable – silently skip */ }
   }
+
+  // Check internet connectivity and update badge + Speed Test warning
+  checkInternetStatus();
 })();
 
 // ── Connection state ─────────────────────────────────────────────────────────
@@ -117,6 +128,31 @@ function setDisconnected() {
   document.getElementById("btn-disconnect").classList.add("d-none");
 }
 
+// ── Internet connectivity check ──────────────────────────────────────────────
+
+let internetOnline = null;  // null = unknown, true/false = checked
+
+async function checkInternetStatus() {
+  const badge = document.getElementById("internet-badge");
+  const offlineWarning = document.getElementById("speedtest-offline-warning");
+  try {
+    const data = await (await fetch("/api/network/internet")).json();
+    internetOnline = data.online;
+    if (data.online) {
+      badge.className = "badge bg-success";
+      badge.textContent = "🌐 Online";
+      if (offlineWarning) offlineWarning.classList.add("d-none");
+    } else {
+      badge.className = "badge bg-danger";
+      badge.textContent = "🌐 Offline";
+      if (offlineWarning) offlineWarning.classList.remove("d-none");
+    }
+  } catch {
+    badge.className = "badge bg-secondary";
+    badge.textContent = "🌐 Unknown";
+  }
+}
+
 // ── Connect form ─────────────────────────────────────────────────────────────
 
 document.getElementById("connect-form").addEventListener("submit", async (e) => {
@@ -126,6 +162,7 @@ document.getElementById("connect-form").addEventListener("submit", async (e) => 
   const gateway  = document.getElementById("f-gateway").value.trim();
   const username = document.getElementById("f-username").value.trim();
   const password = document.getElementById("f-password").value;
+  const preset   = document.getElementById("f-preset").value;
 
   if (!gateway || !username || !password) {
     showAlert("connect-alert", "Please fill in all fields.");
@@ -137,9 +174,9 @@ document.getElementById("connect-form").addEventListener("submit", async (e) => 
   btn.textContent = "Connecting…";
 
   try {
-    const data = await postJSON("/api/connect", { gateway, username, password });
+    const data = await postJSON("/api/connect", { gateway, username, password, preset });
     if (data.ok) {
-      savePrefs(gateway, username);
+      savePrefs(gateway, username, preset);
       setConnected(data.gateway, data.verified === true);
       document.getElementById("f-password").value = "";
       if (data.verified === true) {
@@ -230,6 +267,16 @@ document.getElementById("btn-speedtest").addEventListener("click", async () => {
   clearEl("speedtest-results");
   const spinner = document.getElementById("speedtest-spinner");
   const btn = document.getElementById("btn-speedtest");
+  const offlineWarning = document.getElementById("speedtest-offline-warning");
+
+  // Re-check internet status before running
+  await checkInternetStatus();
+  if (internetOnline === false) {
+    if (offlineWarning) offlineWarning.classList.remove("d-none");
+    document.getElementById("speedtest-results").innerHTML =
+      `<div class="alert alert-warning mt-2">⚠️ No internet connection detected. Connect to the internet and try again.</div>`;
+    return;
+  }
 
   spinner.classList.remove("d-none");
   btn.disabled = true;

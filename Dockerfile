@@ -15,9 +15,10 @@ COPY . .
 # Expose the UI port
 EXPOSE 5000
 
-# SPEEDROUTER_HOST=0.0.0.0 makes the server reachable from outside the container.
-# Override SPEEDROUTER_PORT if you remap the port.
-ENV SPEEDROUTER_HOST=0.0.0.0
-ENV SPEEDROUTER_PORT=5000
+# Number of Gunicorn worker processes; override at runtime with -e WEB_CONCURRENCY=4
+ENV WEB_CONCURRENCY=2
 
-CMD ["python", "app.py"]
+# Use Gunicorn (production WSGI server) instead of the Flask development server.
+# Bind to all interfaces so the container port is reachable from the host.
+# $WEB_CONCURRENCY is expanded by the shell; use the exec-form with sh -c to support it.
+CMD ["sh", "-c", "gunicorn app:app --bind 0.0.0.0:5000 --workers ${WEB_CONCURRENCY} --access-logfile - --error-logfile -"]

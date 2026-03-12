@@ -66,6 +66,38 @@ def test_gateway_endpoint_failure(client, monkeypatch):
     assert "error" in data
 
 
+# ── /api/network/internet ─────────────────────────────────────────────────────
+
+def test_internet_online(client, monkeypatch):
+    """When a TCP connection to Cloudflare DNS succeeds, returns online=True."""
+    import socket as socket_module
+
+    class _FakeSocket:
+        def close(self): pass
+
+    monkeypatch.setattr(socket_module, "create_connection", lambda *a, **kw: _FakeSocket())
+    resp = client.get("/api/network/internet")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["online"] is True
+
+
+def test_internet_offline(client, monkeypatch):
+    """When TCP connections to both probe hosts fail, returns online=False."""
+    import socket as socket_module
+
+    def _raise_oserror(*a, **kw):
+        raise OSError("Network unreachable")
+
+    monkeypatch.setattr(socket_module, "create_connection", _raise_oserror)
+    resp = client.get("/api/network/internet")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["online"] is False
+
+
 # ── /api/status ───────────────────────────────────────────────────────────────
 
 def test_status_not_connected(client):
@@ -90,6 +122,21 @@ def test_status_connected(client):
     assert data["ok"] is True
     assert data["connected"] is True
     assert data["gateway"] == "192.168.1.1"
+
+
+def test_status_returns_preset_when_set(client):
+    """When a preset is stored in the session, /api/status returns it."""
+    with client.session_transaction() as sess:
+        sess["gateway"] = "192.168.1.1"
+        sess["username"] = "admin"
+        sess["password"] = "pass"
+        sess["preset"] = "netgear"
+
+    resp = client.get("/api/status")
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["connected"] is True
+    assert data.get("preset") == "netgear"
 
 
 # ── /api/connect ──────────────────────────────────────────────────────────────
@@ -124,6 +171,35 @@ def test_connect_unreachable_modem(client):
     assert resp.status_code == 200
     assert data["ok"] is True
     assert data["verified"] is False
+
+
+def test_connect_stores_preset_in_session(client, monkeypatch):
+    """When a preset is provided it is stored in the session and returned via /api/status."""
+    class _FakeSession:
+        verify = True
+        auth = None
+        def post(self, *a, **kw):
+            class R:
+                ok = True
+                status_code = 200
+                def raise_for_status(self): pass
+            return R()
+        def get(self, *a, **kw):
+            class R:
+                status_code = 200
+                ok = True
+            return R()
+
+    monkeypatch.setattr(app_module, "_modem_session", lambda *a, **kw: _FakeSession())
+
+    resp = client.post(
+        "/api/connect",
+        json={"gateway": "192.168.1.1", "username": "admin", "password": "pass", "preset": "netgear"},
+    )
+    assert resp.get_json()["ok"] is True
+
+    status = client.get("/api/status").get_json()
+    assert status["preset"] == "netgear"
 
 
 def test_connect_succeeds_when_modem_root_returns_401(client, monkeypatch):
@@ -804,7 +880,7 @@ def test_main_default_host_is_localhost(monkeypatch):
         captured.update(kwargs)
 
     monkeypatch.setattr(app_module.app, "run", fake_run)
-    monkeypatch.setattr("sys.argv", ["speedrouter"])
+    monkeypatch.setattr("sys.argv", ["speedrouter", "--dev"])
 
     app_module.main()
 
@@ -825,7 +901,7 @@ def test_main_env_override(monkeypatch):
         captured.update(kwargs)
 
     monkeypatch.setattr(app_module.app, "run", fake_run)
-    monkeypatch.setattr("sys.argv", ["speedrouter"])
+    monkeypatch.setattr("sys.argv", ["speedrouter", "--dev"])
 
     app_module.main()
 
@@ -846,7 +922,7 @@ def test_main_cli_args_override(monkeypatch):
         captured.update(kwargs)
 
     monkeypatch.setattr(app_module.app, "run", fake_run)
-    monkeypatch.setattr("sys.argv", ["speedrouter", "--host", "0.0.0.0", "--port", "9000"])
+    monkeypatch.setattr("sys.argv", ["speedrouter", "--dev", "--host", "0.0.0.0", "--port", "9000"])
 
     app_module.main()
 
@@ -992,3 +1068,53 @@ def test_vpn_wg_config_format(client, tmp_path, monkeypatch):
     assert "DNS = 8.8.8.8" in cli_cfg
     assert "Endpoint = 5.6.7.8:51820" in cli_cfg
     assert "PersistentKeepalive = 25" in cli_cfg
+
+
+# ── Production server (Gunicorn) ──────────────────────────────────────────────
+
+def test_main_dev_flag_calls_flask_run(monkeypatch):
+    """--dev flag forces app.run() even when Gunicorn is available."""
+    import sys
+    import app as app_module
+
+    run_calls = []
+    # Patch the run method on the actual app object inside app_module
+    monkeypatch.setattr(app_module.app, "run", lambda *a, **kw: run_calls.append(kw))
+
+    old_argv = sys.argv[:]
+    try:
+        sys.argv = ["speedrouter", "--dev", "--port", "19877"]
+        app_module.main()
+    finally:
+        sys.argv = old_argv
+
+    assert run_calls, "app.run() must be called when --dev flag is used"
+    assert run_calls[0].get("port") == 19877
+
+
+def test_main_without_gunicorn_falls_back_to_flask_run(monkeypatch):
+    """When Gunicorn is not importable, main() falls back to app.run()."""
+    import sys
+    import builtins
+    import app as app_module
+
+    run_calls = []
+    monkeypatch.setattr(app_module.app, "run", lambda *a, **kw: run_calls.append(kw))
+
+    real_import = builtins.__import__
+
+    def _block_gunicorn(name, *args, **kwargs):
+        if name.startswith("gunicorn"):
+            raise ImportError("gunicorn not available")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _block_gunicorn)
+
+    old_argv = sys.argv[:]
+    try:
+        sys.argv = ["speedrouter", "--port", "19878"]
+        app_module.main()
+    finally:
+        sys.argv = old_argv
+
+    assert run_calls, "app.run() must be called when Gunicorn is unavailable"

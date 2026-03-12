@@ -12,6 +12,7 @@ import os
 import platform
 import re
 import secrets
+import socket
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -222,8 +223,17 @@ _C4000BZ_USER_FIELD = os.environ.get("ROUTER_USER_FIELD", "username")
 _C4000BZ_PASS_FIELD = os.environ.get("ROUTER_PASS_FIELD", "password")
 
 # Known router presets: name → (login_path, user_field, pass_field)
+# None value means HTTP Basic Auth only (no form POST login).
+# "auto" is handled specially in api_connect: it triggers the default
+# auto-detect behaviour (try form login, fall back to Basic Auth).
 ROUTER_PRESETS = {
+    "auto": None,                # See api_connect – auto-detect login method
     "centurylink_c4000bz": ("/login.cgi", "username", "password"),
+    "netgear": ("/index.htm", "username", "password"),
+    "asus": ("/login.cgi", "group_id", "passwd"),
+    "tp_link": ("/cgi-bin/luci/rpc/auth", "username", "password"),
+    "arris_surfboard": ("/goform/login", "loginUsername", "loginPassword"),
+    "motorola": ("/login.asp", "loginUsername", "loginPassword"),
     "generic_form": ("/login.cgi", "username", "password"),
     "generic_basic": None,  # HTTP Basic Auth only
 }
@@ -320,6 +330,24 @@ def api_network_gateway():
     return jsonify({"ok": False, "error": "Could not detect gateway."}), 200
 
 
+@app.route("/api/network/internet")
+def api_network_internet():
+    """Check whether the host running speedRouter has internet access.
+
+    Uses a lightweight TCP handshake to Cloudflare's public DNS (1.1.1.1:53)
+    and Google's (8.8.8.8:53) as a fallback.  No DNS lookup is performed, so
+    this works even when DNS is broken.  Returns {"ok": true, "online": true/false}.
+    """
+    for host, port in [("1.1.1.1", 53), ("8.8.8.8", 53)]:
+        try:
+            sock = socket.create_connection((host, port), timeout=3)
+            sock.close()
+            return jsonify({"ok": True, "online": True})
+        except OSError:
+            continue
+    return jsonify({"ok": True, "online": False})
+
+
 @app.route("/api/status")
 def api_status():
     """Return current modem connection state so the UI can restore itself after a page reload."""
@@ -328,7 +356,8 @@ def api_status():
             "ok": True,
             "connected": True,
             "gateway": session["gateway"],
-            "username": session.get("username", "")
+            "username": session.get("username", ""),
+            "preset": session.get("preset", ""),
         })
     return jsonify({"ok": True, "connected": False})
 
@@ -351,11 +380,12 @@ def api_connect():
     except ValueError:
         return jsonify({"ok": False, "error": "Invalid gateway IP address."}), 400
 
-    # Resolve login parameters from preset (if provided)
+    # Resolve login parameters from preset (if provided).
+    # "auto" and unknown presets use the default auto-detect behaviour.
     login_path = None
     user_field = _C4000BZ_USER_FIELD
     pass_field = _C4000BZ_PASS_FIELD
-    if preset and preset in ROUTER_PRESETS:
+    if preset and preset in ROUTER_PRESETS and preset != "auto":
         preset_cfg = ROUTER_PRESETS[preset]
         if preset_cfg is not None:
             login_path, user_field, pass_field = preset_cfg
@@ -389,6 +419,8 @@ def api_connect():
     session["password"] = password
     session["scheme"] = scheme
     session["port"] = port
+    if preset:
+        session["preset"] = preset
     return jsonify({"ok": True, "gateway": gateway, "verified": verified})
 
 
@@ -964,7 +996,52 @@ def main():
         default=int(os.environ.get("SPEEDROUTER_PORT", "5000")),
         help="Port to listen on (default: 5000)",
     )
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        default=False,
+        help="Use the Flask development server instead of Gunicorn (local testing only)",
+    )
     args = parser.parse_args()
+
+    if not args.dev:
+        try:
+            from gunicorn.app.base import BaseApplication  # type: ignore[import-untyped]
+
+            class _StandaloneApplication(BaseApplication):
+                """Thin wrapper that lets Gunicorn serve any WSGI app object."""
+
+                def __init__(self, wsgi_app, options=None):
+                    self.options = options or {}
+                    self.wsgi_app = wsgi_app
+                    super().__init__()
+
+                def load_config(self):
+                    for key, value in self.options.items():
+                        if key in self.cfg.settings and value is not None:
+                            self.cfg.set(key.lower(), value)
+
+                def load(self):
+                    return self.wsgi_app
+
+            workers = int(os.environ.get("WEB_CONCURRENCY", "2"))
+            _StandaloneApplication(app, {
+                "bind": f"{args.host}:{args.port}",
+                "workers": workers,
+                "accesslog": "-",
+                "errorlog": "-",
+            }).run()
+            return
+        except ImportError:
+            # Gunicorn is not installed (unlikely given requirements.txt, but
+            # Windows users or minimal installs may hit this path).
+            pass
+
+    # Flask development server – only reached with --dev or when Gunicorn is absent.
+    print(  # noqa: T201
+        f"⚠  Starting Flask development server on http://{args.host}:{args.port}\n"
+        f"   For production use: gunicorn app:app --bind {args.host}:{args.port}"
+    )
     app.run(debug=False, host=args.host, port=args.port)
 
 

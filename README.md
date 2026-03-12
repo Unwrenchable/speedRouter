@@ -33,11 +33,17 @@ restored on the next visit (password is never stored).
 
 ```bash
 pip install -r requirements.txt
-python app.py
-# → http://127.0.0.1:5000
+python app.py             # → Gunicorn on http://127.0.0.1:5000
 ```
 
-### Expose on the local network (side-load accessible)
+> **Production server:** `python app.py` (and the `speedrouter` CLI) now start
+> **Gunicorn** by default — no Flask development-server warning.  
+> Add `--dev` to force the Flask dev server for quick local testing only:
+> ```bash
+> python app.py --dev
+> ```
+
+### Expose on the local network (accessible from other devices)
 
 ```bash
 python app.py --host 0.0.0.0 --port 5000
@@ -48,6 +54,7 @@ Environment variables work too:
 
 ```bash
 SPEEDROUTER_HOST=0.0.0.0 SPEEDROUTER_PORT=8080 python app.py
+WEB_CONCURRENCY=4 python app.py   # override number of Gunicorn workers
 ```
 
 ---
@@ -56,9 +63,10 @@ SPEEDROUTER_HOST=0.0.0.0 SPEEDROUTER_PORT=8080 python app.py
 
 ```bash
 pip install -e .
-speedrouter                          # localhost:5000
+speedrouter                          # Gunicorn on localhost:5000
 speedrouter --host 0.0.0.0          # expose to network
 speedrouter --host 0.0.0.0 --port 8080
+speedrouter --dev                   # Flask dev server (local testing only)
 ```
 
 ---
@@ -73,11 +81,27 @@ docker run -p 5000:5000 speedrouter
 # → http://<device-ip>:5000
 ```
 
+Set a stable secret key and optional worker count:
+
+```bash
+docker run -p 5000:5000 \
+  -e SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')" \
+  -e WEB_CONCURRENCY=4 \
+  speedrouter
+```
+
 ### Or use Docker Compose (one command)
 
 ```bash
 docker compose up -d
 # → http://<device-ip>:5000
+```
+
+Set `SECRET_KEY` in a `.env` file alongside `docker-compose.yml` so sessions survive restarts:
+
+```bash
+echo "SECRET_KEY=$(python -c 'import secrets; print(secrets.token_hex(32))')" > .env
+docker compose up -d
 ```
 
 Stop it:
