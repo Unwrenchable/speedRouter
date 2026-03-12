@@ -996,7 +996,52 @@ def main():
         default=int(os.environ.get("SPEEDROUTER_PORT", "5000")),
         help="Port to listen on (default: 5000)",
     )
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        default=False,
+        help="Use the Flask development server instead of Gunicorn (local testing only)",
+    )
     args = parser.parse_args()
+
+    if not args.dev:
+        try:
+            from gunicorn.app.base import BaseApplication  # type: ignore[import-untyped]
+
+            class _StandaloneApplication(BaseApplication):
+                """Thin wrapper that lets Gunicorn serve any WSGI app object."""
+
+                def __init__(self, wsgi_app, options=None):
+                    self.options = options or {}
+                    self.wsgi_app = wsgi_app
+                    super().__init__()
+
+                def load_config(self):
+                    for key, value in self.options.items():
+                        if key in self.cfg.settings and value is not None:
+                            self.cfg.set(key.lower(), value)
+
+                def load(self):
+                    return self.wsgi_app
+
+            workers = int(os.environ.get("WEB_CONCURRENCY", "2"))
+            _StandaloneApplication(app, {
+                "bind": f"{args.host}:{args.port}",
+                "workers": workers,
+                "accesslog": "-",
+                "errorlog": "-",
+            }).run()
+            return
+        except ImportError:
+            # Gunicorn is not installed (unlikely given requirements.txt, but
+            # Windows users or minimal installs may hit this path).
+            pass
+
+    # Flask development server – only reached with --dev or when Gunicorn is absent.
+    print(  # noqa: T201
+        f"⚠  Starting Flask development server on http://{args.host}:{args.port}\n"
+        f"   For production use: gunicorn app:app --bind {args.host}:{args.port}"
+    )
     app.run(debug=False, host=args.host, port=args.port)
 
 

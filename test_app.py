@@ -880,7 +880,7 @@ def test_main_default_host_is_localhost(monkeypatch):
         captured.update(kwargs)
 
     monkeypatch.setattr(app_module.app, "run", fake_run)
-    monkeypatch.setattr("sys.argv", ["speedrouter"])
+    monkeypatch.setattr("sys.argv", ["speedrouter", "--dev"])
 
     app_module.main()
 
@@ -901,7 +901,7 @@ def test_main_env_override(monkeypatch):
         captured.update(kwargs)
 
     monkeypatch.setattr(app_module.app, "run", fake_run)
-    monkeypatch.setattr("sys.argv", ["speedrouter"])
+    monkeypatch.setattr("sys.argv", ["speedrouter", "--dev"])
 
     app_module.main()
 
@@ -922,7 +922,7 @@ def test_main_cli_args_override(monkeypatch):
         captured.update(kwargs)
 
     monkeypatch.setattr(app_module.app, "run", fake_run)
-    monkeypatch.setattr("sys.argv", ["speedrouter", "--host", "0.0.0.0", "--port", "9000"])
+    monkeypatch.setattr("sys.argv", ["speedrouter", "--dev", "--host", "0.0.0.0", "--port", "9000"])
 
     app_module.main()
 
@@ -1068,3 +1068,53 @@ def test_vpn_wg_config_format(client, tmp_path, monkeypatch):
     assert "DNS = 8.8.8.8" in cli_cfg
     assert "Endpoint = 5.6.7.8:51820" in cli_cfg
     assert "PersistentKeepalive = 25" in cli_cfg
+
+
+# ── Production server (Gunicorn) ──────────────────────────────────────────────
+
+def test_main_dev_flag_calls_flask_run(monkeypatch):
+    """--dev flag forces app.run() even when Gunicorn is available."""
+    import sys
+    import app as app_module
+
+    run_calls = []
+    # Patch the run method on the actual app object inside app_module
+    monkeypatch.setattr(app_module.app, "run", lambda *a, **kw: run_calls.append(kw))
+
+    old_argv = sys.argv[:]
+    try:
+        sys.argv = ["speedrouter", "--dev", "--port", "19877"]
+        app_module.main()
+    finally:
+        sys.argv = old_argv
+
+    assert run_calls, "app.run() must be called when --dev flag is used"
+    assert run_calls[0].get("port") == 19877
+
+
+def test_main_without_gunicorn_falls_back_to_flask_run(monkeypatch):
+    """When Gunicorn is not importable, main() falls back to app.run()."""
+    import sys
+    import builtins
+    import app as app_module
+
+    run_calls = []
+    monkeypatch.setattr(app_module.app, "run", lambda *a, **kw: run_calls.append(kw))
+
+    real_import = builtins.__import__
+
+    def _block_gunicorn(name, *args, **kwargs):
+        if name.startswith("gunicorn"):
+            raise ImportError("gunicorn not available")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _block_gunicorn)
+
+    old_argv = sys.argv[:]
+    try:
+        sys.argv = ["speedrouter", "--port", "19878"]
+        app_module.main()
+    finally:
+        sys.argv = old_argv
+
+    assert run_calls, "app.run() must be called when Gunicorn is unavailable"
